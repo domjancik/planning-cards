@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Planning Poker</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <script>
+      document.documentElement.dataset.view =
+        new URLSearchParams(window.location.search).get("view") === "public"
+          ? "public"
+          : "controller";
+    </script>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #18202b;
+        --muted: #697386;
+        --line: #d7dee8;
+        --surface: #ffffff;
+        --surface-soft: #f5f7fa;
+        --accent: #0f766e;
+        --accent-dark: #115e59;
+        --accent-soft: #d9f3ef;
+        --shadow: 0 22px 70px rgba(25, 32, 43, 0.15);
+        --card-radius: 8px;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(rgba(15, 118, 110, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(15, 118, 110, 0.05) 1px, transparent 1px),
+          linear-gradient(135deg, #f9fafb 0%, #eef3f7 100%);
+        background-size: 34px 34px, 34px 34px, auto;
+        color: var(--ink);
+      }
+
+      button {
+        font: inherit;
+      }
+
+      .app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: clamp(14px, 2vw, 22px);
+        padding: clamp(14px, 3vw, 34px);
+      }
+
+      .topbar,
+      .controls {
+        width: min(100%, 1040px);
+        margin-inline: auto;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .brand-mark {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: 0 8px 28px rgba(24, 32, 43, 0.08);
+        color: var(--accent);
+        font-weight: 900;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(1.1rem, 2.8vw, 1.55rem);
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+
+      .state-pill {
+        flex: 0 0 auto;
+        min-width: 88px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--muted);
+        font-size: 0.88rem;
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .stage {
+        width: min(100%, 1040px);
+        margin-inline: auto;
+        display: grid;
+        place-items: center;
+        min-height: 0;
+      }
+
+      .display-card {
+        display: block;
+        width: min(76vw, 390px);
+        aspect-ratio: 5 / 7;
+        border: 0;
+        border-radius: var(--card-radius);
+        background: transparent;
+        padding: 0;
+        perspective: 1300px;
+        cursor: pointer;
+      }
+
+      .display-card:disabled {
+        cursor: default;
+      }
+
+      .display-card:focus-visible,
+      .choice-card:focus-visible,
+      .action:focus-visible {
+        outline: 4px solid rgba(15, 118, 110, 0.24);
+        outline-offset: 4px;
+      }
+
+      .card-inner {
+        display: block;
+        position: relative;
+        width: 100%;
+        height: 100%;
+        transform-style: preserve-3d;
+        transition: transform 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      .display-card.is-revealed .card-inner {
+        transform: rotateY(180deg);
+      }
+
+      .card-face {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        border-radius: var(--card-radius);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        box-shadow: var(--shadow);
+      }
+
+      .card-back {
+        border: 1px solid #c9d3df;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.5), transparent 42%),
+          repeating-linear-gradient(
+            45deg,
+            #0f766e 0 13px,
+            #12867d 13px 26px,
+            #0d625c 26px 39px
+          );
+      }
+
+      .card-back::before {
+        content: "";
+        width: 72%;
+        height: 72%;
+        border: 2px solid rgba(255, 255, 255, 0.6);
+        border-radius: 4px;
+        background:
+          radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.5) 0 6px, transparent 7px),
+          radial-gradient(circle at 75% 75%, rgba(255, 255, 255, 0.42) 0 6px, transparent 7px),
+          rgba(255, 255, 255, 0.12);
+      }
+
+      .card-front {
+        transform: rotateY(180deg);
+        border: 1px solid #cfd8e3;
+        background:
+          linear-gradient(180deg, rgba(15, 118, 110, 0.08), transparent 42%),
+          var(--surface);
+      }
+
+      .card-value {
+        display: grid;
+        place-items: center;
+        width: 82%;
+        height: 82%;
+        border: 2px solid var(--accent);
+        border-radius: 4px;
+        color: var(--accent-dark);
+        font-size: clamp(6.5rem, 24vw, 12.5rem);
+        font-weight: 900;
+        line-height: 0.82;
+        letter-spacing: 0;
+      }
+
+      .card-value.is-infinite {
+        font-size: clamp(7rem, 26vw, 14rem);
+        padding-bottom: 0.12em;
+      }
+
+      .placeholder {
+        display: grid;
+        place-items: center;
+        gap: 10px;
+        width: 82%;
+        height: 82%;
+        border: 2px dashed rgba(255, 255, 255, 0.64);
+        border-radius: 4px;
+        color: #ffffff;
+        font-size: clamp(3rem, 12vw, 5.5rem);
+        font-weight: 900;
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.24);
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 14px;
+        align-items: center;
+      }
+
+      .deck {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(46px, 1fr));
+        gap: 8px;
+      }
+
+      .choice-card {
+        min-width: 0;
+        aspect-ratio: 5 / 6;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--ink);
+        cursor: pointer;
+        font-size: clamp(1.08rem, 3vw, 1.7rem);
+        font-weight: 850;
+        box-shadow: 0 8px 24px rgba(24, 32, 43, 0.08);
+        transition:
+          transform 140ms ease,
+          border-color 140ms ease,
+          background 140ms ease,
+          box-shadow 140ms ease;
+      }
+
+      .choice-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 28px rgba(24, 32, 43, 0.12);
+      }
+
+      .choice-card[aria-pressed="true"] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+        box-shadow: 0 10px 30px rgba(15, 118, 110, 0.2);
+      }
+
+      .actions {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+      }
+
+      .action {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        min-height: 48px;
+        padding: 0 18px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .action.primary {
+        min-width: 108px;
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #ffffff;
+      }
+
+      .action.primary:hover {
+        background: var(--accent-dark);
+      }
+
+      .action.secondary:hover {
+        border-color: #b7c2d0;
+        background: var(--surface-soft);
+      }
+
+      .action:disabled {
+        cursor: not-allowed;
+        opacity: 0.46;
+      }
+
+      html[data-view="public"] .app {
+        grid-template-rows: 1fr;
+        padding: clamp(18px, 4vw, 48px);
+      }
+
+      html[data-view="public"] .topbar,
+      html[data-view="public"] .controls {
+        display: none;
+      }
+
+      html[data-view="public"] .stage {
+        height: calc(100vh - clamp(36px, 8vw, 96px));
+      }
+
+      html[data-view="public"] .display-card {
+        width: min(78vw, 560px, calc(88vh * 5 / 7));
+        cursor: default;
+      }
+
+      @media (max-width: 760px) {
+        .app {
+          min-height: 100svh;
+          padding: 12px;
+        }
+
+        .topbar {
+          align-items: flex-start;
+        }
+
+        .brand-mark {
+          width: 38px;
+          height: 38px;
+          border-radius: 8px;
+        }
+
+        .stage {
+          align-items: center;
+        }
+
+        .display-card {
+          width: min(82vw, 320px);
+        }
+
+        .controls {
+          grid-template-columns: 1fr;
+        }
+
+        .actions {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .action {
+          width: 100%;
+          min-width: 0;
+          padding-inline: 10px;
+        }
+      }
+
+      @media (max-width: 420px) {
+        .deck {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .choice-card {
+          aspect-ratio: 8 / 5;
+        }
+
+        .state-pill {
+          min-width: 76px;
+          padding-inline: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand" aria-label="Planning Poker">
+          <div class="brand-mark" aria-hidden="true">P</div>
+          <h1>Planning Poker</h1>
+        </div>
+        <div class="state-pill" id="stateLabel" aria-live="polite">Hidden</div>
+      </header>
+
+      <section class="stage" aria-label="Selected card">
+        <button class="display-card" id="displayCard" type="button" disabled>
+          <span class="card-inner">
+            <span class="card-face card-back" aria-hidden="true">
+              <span class="placeholder">?</span>
+            </span>
+            <span class="card-face card-front">
+              <span class="card-value" id="cardValue">?</span>
+            </span>
+          </span>
+        </button>
+      </section>
+
+      <section class="controls" aria-label="Card controls">
+        <div class="deck" id="deck" aria-label="Card values"></div>
+        <div class="actions">
+          <button class="action primary" id="revealButton" type="button" disabled>Reveal</button>
+          <button class="action secondary" id="clearButton" type="button" disabled>Clear</button>
+          <button class="action secondary" id="displayButton" type="button">Display</button>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const cards = [
+        { value: "1", label: "1" },
+        { value: "3", label: "3" },
+        { value: "5", label: "5" },
+        { value: "8", label: "8" },
+        { value: "13", label: "13" },
+        { value: "infinite", label: "∞" },
+      ];
+
+      const deck = document.querySelector("#deck");
+      const displayCard = document.querySelector("#displayCard");
+      const cardValue = document.querySelector("#cardValue");
+      const revealButton = document.querySelector("#revealButton");
+      const clearButton = document.querySelector("#clearButton");
+      const displayButton = document.querySelector("#displayButton");
+      const stateLabel = document.querySelector("#stateLabel");
+      const isPublicView = document.documentElement.dataset.view === "public";
+      const storageKey = "planning-poker-card-state";
+      const channel =
+        "BroadcastChannel" in window ? new BroadcastChannel("planning-poker-cards") : null;
+
+      let state = loadState();
+
+      function normalizeState(value) {
+        const selectedCard = cards.find((card) => card.value === value?.selectedValue);
+        const updatedAt =
+          Number.isFinite(value?.updatedAt) && value.updatedAt > 0 ? value.updatedAt : Date.now();
+
+        return {
+          selectedValue: selectedCard?.value ?? null,
+          revealed: Boolean(selectedCard && value?.revealed),
+          updatedAt,
+        };
+      }
+
+      function loadState() {
+        try {
+          return normalizeState(JSON.parse(localStorage.getItem(storageKey) ?? "{}"));
+        } catch {
+          return normalizeState({});
+        }
+      }
+
+      function selectedCard() {
+        return cards.find((card) => card.value === state.selectedValue) ?? null;
+      }
+
+      function publishState() {
+        state.updatedAt = Date.now();
+
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(state));
+        } catch {
+          // BroadcastChannel still keeps open tabs connected when local persistence is unavailable.
+        }
+
+        channel?.postMessage(state);
+        render();
+      }
+
+      function applyRemoteState(nextState) {
+        const normalized = normalizeState(nextState);
+
+        if (normalized.updatedAt < state.updatedAt) {
+          return;
+        }
+
+        state = normalized;
+        render();
+      }
+
+      function setSelection(card) {
+        state = {
+          selectedValue: card.value,
+          revealed: false,
+          updatedAt: state.updatedAt,
+        };
+        publishState();
+      }
+
+      function toggleReveal() {
+        if (!selectedCard()) return;
+        state = {
+          ...state,
+          revealed: !state.revealed,
+        };
+        publishState();
+      }
+
+      function clearSelection() {
+        state = {
+          selectedValue: null,
+          revealed: false,
+          updatedAt: state.updatedAt,
+        };
+        publishState();
+      }
+
+      function render() {
+        const selected = selectedCard();
+        const hasSelection = Boolean(selected);
+
+        deck.querySelectorAll(".choice-card").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.value === selected?.value));
+        });
+
+        displayCard.disabled = !isPublicView && !hasSelection;
+        displayCard.tabIndex = isPublicView ? -1 : 0;
+        displayCard.setAttribute("aria-disabled", String(isPublicView || !hasSelection));
+        displayCard.classList.toggle("is-revealed", state.revealed);
+        cardValue.textContent = selected?.label ?? "?";
+        cardValue.classList.toggle("is-infinite", selected?.value === "infinite");
+
+        revealButton.disabled = !hasSelection;
+        clearButton.disabled = !hasSelection;
+        revealButton.textContent = state.revealed ? "Hide" : "Reveal";
+        stateLabel.textContent = state.revealed ? "Revealed" : "Hidden";
+        displayCard.setAttribute(
+          "aria-label",
+          state.revealed && selected ? `Revealed card ${selected.value}` : "Hidden card"
+        );
+      }
+
+      cards.forEach((card) => {
+        const button = document.createElement("button");
+        button.className = "choice-card";
+        button.type = "button";
+        button.dataset.value = card.value;
+        button.textContent = card.label;
+        button.setAttribute("aria-label", `Select ${card.value}`);
+        button.setAttribute("aria-pressed", "false");
+        button.addEventListener("click", () => setSelection(card));
+        deck.append(button);
+      });
+
+      revealButton.addEventListener("click", () => {
+        toggleReveal();
+      });
+
+      clearButton.addEventListener("click", () => {
+        clearSelection();
+      });
+
+      displayButton.addEventListener("click", () => {
+        const displayUrl = new URL(window.location.href);
+        displayUrl.searchParams.set("view", "public");
+        window.open(displayUrl.toString(), "planning-poker-display");
+      });
+
+      displayCard.addEventListener("click", () => {
+        if (isPublicView) return;
+        toggleReveal();
+      });
+
+      window.addEventListener("keydown", (event) => {
+        if (isPublicView) {
+          return;
+        }
+
+        if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+          return;
+        }
+
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggleReveal();
+          return;
+        }
+
+        if (event.key === "Escape") {
+          clearSelection();
+          return;
+        }
+
+        const byKey = {
+          "1": cards[0],
+          "3": cards[1],
+          "5": cards[2],
+          "8": cards[3],
+        };
+
+        if (byKey[event.key]) {
+          setSelection(byKey[event.key]);
+        }
+      });
+
+      channel?.addEventListener("message", (event) => {
+        applyRemoteState(event.data);
+      });
+
+      window.addEventListener("storage", (event) => {
+        if (event.key === storageKey && event.newValue) {
+          applyRemoteState(JSON.parse(event.newValue));
+        }
+      });
+
+      render();
+    </script>
+  </body>
+</html>
