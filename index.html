@@ -181,6 +181,13 @@
           );
       }
 
+      .display-card.has-selection:not(.is-revealed) .card-back {
+        border-color: #b7fff4;
+        box-shadow:
+          var(--shadow),
+          0 0 0 7px rgba(15, 118, 110, 0.14);
+      }
+
       .card-back::before {
         content: "";
         width: 72%;
@@ -232,6 +239,13 @@
         font-size: clamp(3rem, 12vw, 5.5rem);
         font-weight: 900;
         text-shadow: 0 2px 18px rgba(0, 0, 0, 0.24);
+      }
+
+      .placeholder.is-placed {
+        border-style: solid;
+        background: rgba(255, 255, 255, 0.14);
+        font-size: clamp(1.45rem, 5vw, 3rem);
+        line-height: 1;
       }
 
       .controls {
@@ -398,14 +412,14 @@
           <div class="brand-mark" aria-hidden="true">P</div>
           <h1>Planning Poker</h1>
         </div>
-        <div class="state-pill" id="stateLabel" aria-live="polite">Hidden</div>
+        <div class="state-pill" id="stateLabel" aria-live="polite">No card</div>
       </header>
 
       <section class="stage" aria-label="Selected card">
         <button class="display-card" id="displayCard" type="button" disabled>
           <span class="card-inner">
             <span class="card-face card-back" aria-hidden="true">
-              <span class="placeholder">?</span>
+              <span class="placeholder" id="hiddenMarker">?</span>
             </span>
             <span class="card-face card-front">
               <span class="card-value" id="cardValue">?</span>
@@ -437,6 +451,7 @@
       const deck = document.querySelector("#deck");
       const displayCard = document.querySelector("#displayCard");
       const cardValue = document.querySelector("#cardValue");
+      const hiddenMarker = document.querySelector("#hiddenMarker");
       const revealButton = document.querySelector("#revealButton");
       const clearButton = document.querySelector("#clearButton");
       const displayButton = document.querySelector("#displayButton");
@@ -535,16 +550,23 @@
         displayCard.tabIndex = isPublicView ? -1 : 0;
         displayCard.setAttribute("aria-disabled", String(isPublicView || !hasSelection));
         displayCard.classList.toggle("is-revealed", state.revealed);
+        displayCard.classList.toggle("has-selection", hasSelection);
         cardValue.textContent = selected?.label ?? "?";
         cardValue.classList.toggle("is-infinite", selected?.value === "infinite");
+        hiddenMarker.textContent = hasSelection ? "PLACED" : "?";
+        hiddenMarker.classList.toggle("is-placed", hasSelection);
 
         revealButton.disabled = !hasSelection;
         clearButton.disabled = !hasSelection;
         revealButton.textContent = state.revealed ? "Hide" : "Reveal";
-        stateLabel.textContent = state.revealed ? "Revealed" : "Hidden";
+        stateLabel.textContent = state.revealed ? "Revealed" : hasSelection ? "Placed" : "No card";
         displayCard.setAttribute(
           "aria-label",
-          state.revealed && selected ? `Revealed card ${selected.value}` : "Hidden card"
+          state.revealed && selected
+            ? `Revealed card ${selected.value}`
+            : selected
+              ? "Hidden card placed"
+              : "No card selected"
         );
       }
 
