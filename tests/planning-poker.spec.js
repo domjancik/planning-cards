@@ -40,7 +40,7 @@ test("controller exposes the expected private controls", async ({ context }) => 
   await expect(controller.getByRole("button", { name: "Display" })).toBeVisible();
 });
 
-test("public display starts as a clean face-down card", async ({ context }) => {
+test("public display starts as an empty card field", async ({ context }) => {
   const controller = await openCleanController(context);
   const publicDisplay = await context.newPage();
   await publicDisplay.goto("/?view=public");
@@ -50,6 +50,7 @@ test("public display starts as a clean face-down card", async ({ context }) => {
   await expect(publicDisplay.locator(".controls")).toBeHidden();
   await expect(publicDisplay.locator("#displayCard")).toBeVisible();
   await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/is-revealed/);
+  await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/has-visual-card/);
   await expect(publicDisplay.locator("#cardValue")).toHaveText("?");
   await expect(publicDisplay.locator("#hiddenMarker")).toHaveText("?");
   await expect(publicDisplay.locator("#displayCard")).toHaveScreenshot("public-empty-facedown.png");
@@ -68,12 +69,14 @@ test("public display syncs selected face-down and revealed card states", async (
 
   await expect(controller.locator("#displayCard")).not.toHaveClass(/is-revealed/);
   await expect(controller.locator("#displayCard")).toHaveClass(/has-selection/);
+  await expect(controller.locator("#displayCard")).toHaveClass(/has-visual-card/);
   await expect(controller.locator("#stateLabel")).toHaveText("Placed");
   await expect(controller.locator("#cardValue")).toHaveText("8");
   await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/is-revealed/);
   await expect(publicDisplay.locator("#displayCard")).toHaveClass(/has-selection/);
+  await expect(publicDisplay.locator("#displayCard")).toHaveClass(/has-visual-card/);
   await expect(publicDisplay.locator("#cardValue")).toHaveText("8");
-  await expect(publicDisplay.locator("#hiddenMarker")).toHaveText("PLACED");
+  await expect(publicDisplay.locator("#hiddenMarker")).toHaveText("?");
   await expect(publicDisplay.locator("#displayCard")).toHaveAttribute("aria-label", "Hidden card placed");
   await expect(publicDisplay.locator("#displayCard")).toHaveScreenshot("public-selected-facedown.png");
 
@@ -85,4 +88,23 @@ test("public display syncs selected face-down and revealed card states", async (
   await expect(publicDisplay.locator("#displayCard")).toHaveAttribute("aria-label", "Revealed card 8");
   await expect(publicDisplay.locator("#cardValue")).toHaveText("8");
   await expect(publicDisplay.locator("#displayCard")).toHaveScreenshot("public-card-8-revealed.png");
+});
+
+test("card slides in when placed and out when cleared", async ({ context }) => {
+  const controller = await openCleanController(context);
+  const publicDisplay = await context.newPage();
+  await publicDisplay.goto("/?view=public");
+
+  await controller.getByRole("button", { name: "Select 5" }).click();
+
+  await expect(publicDisplay.locator("#displayCard")).toHaveClass(/has-visual-card/);
+  await expect(publicDisplay.locator("#displayCard")).toHaveClass(/is-entering/);
+
+  await controller.getByRole("button", { name: "Clear" }).click();
+
+  await expect(publicDisplay.locator("#displayCard")).toHaveClass(/is-exiting/);
+  await expect(publicDisplay.locator("#displayCard")).toHaveClass(/has-visual-card/);
+  await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/has-selection/);
+  await expect(publicDisplay.locator("#displayCard")).toHaveAttribute("aria-label", "No card selected");
+  await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/has-visual-card/, { timeout: 1000 });
 });
