@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "screenshots": "node scripts/capture-readme-screenshots.js",
     "test": "playwright test"
   },
   "devDependencies": {
