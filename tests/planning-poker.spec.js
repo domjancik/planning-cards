@@ -41,6 +41,13 @@ test("controller exposes the expected private controls", async ({ context }) => 
   await expect(controller.getByRole("button", { name: "Display" })).toBeVisible();
   await expect(controller.getByRole("button", { name: "Room" })).toBeVisible();
 
+  const deckBox = await controller.locator("#deck").boundingBox();
+  const actionsBox = await controller.locator(".actions").boundingBox();
+  if (!deckBox || !actionsBox) {
+    throw new Error("Expected deck and action controls to be laid out");
+  }
+  expect(actionsBox.y).toBeGreaterThan(deckBox.y + deckBox.height - 1);
+
   await controller.getByRole("button", { name: "Ready" }).click();
 
   await expect(controller.locator("#stateLabel")).toHaveText("Ready");
