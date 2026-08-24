@@ -13,7 +13,7 @@
           : "controller";
       document.documentElement.dataset.mode = initialParams.get("room") ? "shared" : "single";
     </script>
-    <script src="./supabase-config.js"></script>
+    <script src="./spacetime-client.js"></script>
     <style>
       :root {
         color-scheme: light;
@@ -861,9 +861,12 @@
       const roomId = normalizeRoomId(rawRoomId);
       const isPublicView = document.documentElement.dataset.view === "public";
       const isSharedMode = Boolean(roomId);
-      const canTrackPresence = isSharedMode && !isPublicView;
-      const supabaseConfig = window.PLANNING_CARDS_SUPABASE ?? {};
-      const supabaseClientUrl = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+      const canPublishSharedState = isSharedMode && !isPublicView;
+      const spacetimeConfig = {
+        uri: window.PLANNING_CARDS_SPACETIME?.uri ?? "https://maincloud.spacetimedb.com",
+        database: window.PLANNING_CARDS_SPACETIME?.database ?? "planning-cards",
+      };
+      const spacetimeTokenKey = `planning-poker-spacetime-token:${spacetimeConfig.uri}:${spacetimeConfig.database}`;
       const participantIdKey = "planning-poker-participant-id";
       const participantNameKey = "planning-poker-participant-name";
       const participantId = getOrCreateParticipantId();
@@ -912,14 +915,18 @@
       let exitTimer = null;
       let sharedPhase = state.revealed ? "revealed" : "voting";
       let sharedPhaseUpdatedAt = 0;
-      let supabase = null;
-      let roomChannel = null;
-      let presenceReady = false;
-      let presenceRows = [];
-      let presenceTimer = null;
+      let sharedResetVersion = 0;
+      let spacetimeConnection = null;
+      let spacetimeSubscription = null;
+      let spacetimeReady = false;
+      let sharedRoomRecord = null;
+      let participantRecords = [];
+      let revealedVoteRecords = [];
+      let sharedSyncTimer = null;
+      let pendingSharedReducerCalls = [];
       let reconnectTimer = null;
       let reconnectAttempt = 0;
-      let realtimeConnectSequence = 0;
+      let spacetimeConnectSequence = 0;
       const sharedCardVisuals = new Map();
       const sharedParticipantElements = new Map();
 
@@ -1004,7 +1011,7 @@
         }, duration);
       }
 
-      function publishState({ syncPresence = true } = {}) {
+      function publishState({ syncShared = true } = {}) {
         state.updatedAt = Date.now();
 
         try {
@@ -1016,8 +1023,8 @@
         localChannel?.postMessage(state);
         render();
 
-        if (syncPresence) {
-          schedulePresenceSync();
+        if (syncShared) {
+          scheduleSharedStateSync();
         }
       }
 
@@ -1077,7 +1084,7 @@
             revealed: false,
             ready: false,
           };
-          broadcastRoomEvent("reset", eventAt);
+          callSharedReducer("resetRoom", { roomId });
           publishState();
           return;
         }
@@ -1092,24 +1099,14 @@
       }
 
       function nextSharedPhaseTimestamp() {
-        return Math.max(Date.now(), sharedPhaseUpdatedAt + 1);
+        return sharedPhaseUpdatedAt + 1;
       }
 
       function normalizeSharedPhase(value) {
         return value === "revealed" ? "revealed" : "voting";
       }
 
-      function broadcastRoomEvent(type, at) {
-        if (!roomChannel) return;
-
-        roomChannel.send({
-          type: "broadcast",
-          event: "room",
-          payload: { type, at },
-        });
-      }
-
-      function setSharedPhase(nextPhase, broadcast, at = nextSharedPhaseTimestamp()) {
+      function setSharedPhase(nextPhase, syncRemote, at = nextSharedPhaseTimestamp()) {
         if (at < sharedPhaseUpdatedAt) {
           return;
         }
@@ -1117,55 +1114,29 @@
         sharedPhaseUpdatedAt = at;
         sharedPhase = normalizeSharedPhase(nextPhase);
         const isRevealedPhase = sharedPhase === "revealed";
-        const eventType = isRevealedPhase ? "reveal" : "hide";
         state = {
           ...state,
           revealed: isRevealedPhase && Boolean(state.selectedValue),
         };
 
-        if (broadcast) {
-          broadcastRoomEvent(eventType, at);
+        if (syncRemote) {
+          callSharedReducer(isRevealedPhase ? "revealRoom" : "hideRoom", { roomId });
         }
 
         publishState();
       }
 
-      function applyRoomEvent(payload) {
-        const eventAt = Number.isFinite(payload?.at) ? payload.at : nextSharedPhaseTimestamp();
-
-        if (payload?.type === "reveal") {
-          setSharedPhase("revealed", false, eventAt);
-          return;
-        }
-
-        if (payload?.type === "hide") {
-          setSharedPhase("voting", false, eventAt);
-          return;
-        }
-
-        if (payload?.type === "reset") {
-          if (eventAt < sharedPhaseUpdatedAt) {
-            return;
-          }
-
-          sharedPhase = "voting";
-          sharedPhaseUpdatedAt = eventAt;
-          state = {
-            ...state,
-            selectedValue: null,
-            revealed: false,
-            ready: false,
-          };
-          publishState();
-        }
+      function participantRecordId() {
+        return `${roomId}:${participantId}`;
       }
 
-      function currentPresencePayload() {
+      function currentParticipantPayload() {
         const hasSelection = Boolean(state.selectedValue);
         const revealed = sharedPhase === "revealed" && hasSelection;
 
         return {
-          id: participantId,
+          id: participantRecordId(),
+          participantId,
           name: participantName,
           ready: state.ready,
           hasSelection,
@@ -1177,84 +1148,188 @@
         };
       }
 
-      function schedulePresenceSync() {
-        if (!canTrackPresence || !presenceReady || !roomChannel) {
+      function reducerParams() {
+        return { roomId, participantId, name: participantName };
+      }
+
+      function handleSharedReducerError(error) {
+        console.error(error);
+        if (!isSharedMode) return;
+        setConnectionState("Retrying");
+        sharedNotice.textContent = "Still joining the room. Sync will retry automatically.";
+        scheduleSpacetimeReconnect();
+      }
+
+      function sendSharedReducer(reducerName, params) {
+        const reducer = spacetimeConnection?.reducers?.[reducerName];
+        if (!reducer) {
+          return Promise.resolve();
+        }
+
+        return reducer(params).catch(handleSharedReducerError);
+      }
+
+      function callSharedReducer(reducerName, params) {
+        if (!canPublishSharedState) {
           return;
         }
 
-        clearTimeout(presenceTimer);
-        presenceTimer = setTimeout(() => {
-          roomChannel.track(currentPresencePayload());
-        }, 80);
+        if (!spacetimeReady || !spacetimeConnection) {
+          pendingSharedReducerCalls.push({ reducerName, params });
+          return;
+        }
+
+        sendSharedReducer(reducerName, params);
+      }
+
+      function flushPendingSharedReducers() {
+        if (!spacetimeReady || !spacetimeConnection || pendingSharedReducerCalls.length === 0) {
+          return;
+        }
+
+        const pending = pendingSharedReducerCalls;
+        pendingSharedReducerCalls = [];
+        pending.forEach(({ reducerName, params }) => sendSharedReducer(reducerName, params));
+      }
+
+      function syncLocalParticipantToSpacetime() {
+        if (!canPublishSharedState || !spacetimeReady || !spacetimeConnection) {
+          return;
+        }
+
+        const params = reducerParams();
+        sendSharedReducer("joinRoom", params);
+        sendSharedReducer("setReady", { ...params, ready: state.ready });
+
+        if (state.selectedValue) {
+          sendSharedReducer("selectCard", {
+            ...params,
+            selectedValue: state.selectedValue,
+          });
+        }
+      }
+
+      function scheduleSharedStateSync() {
+        if (!canPublishSharedState) {
+          return;
+        }
+
+        clearTimeout(sharedSyncTimer);
+        sharedSyncTimer = setTimeout(syncLocalParticipantToSpacetime, 80);
       }
 
       function localParticipantRow() {
         return {
-          ...currentPresencePayload(),
+          ...currentParticipantPayload(),
           isSelf: true,
         };
       }
 
+      function timestampToMillis(value) {
+        if (!value) return 0;
+        if (typeof value.toMillis === "function") {
+          return Number(value.toMillis());
+        }
+        if (typeof value.microsSinceUnixEpoch === "bigint") {
+          return Number(value.microsSinceUnixEpoch / 1000n);
+        }
+        if (typeof value.__timestamp_micros_since_unix_epoch__ === "bigint") {
+          return Number(value.__timestamp_micros_since_unix_epoch__ / 1000n);
+        }
+        return 0;
+      }
+
+      function numberFromBigInt(value) {
+        return typeof value === "bigint" ? Number(value) : Number(value) || 0;
+      }
+
+      function applySharedRowsToState() {
+        if (!sharedRoomRecord) {
+          return;
+        }
+
+        const nextResetVersion = numberFromBigInt(sharedRoomRecord.resetVersion);
+        if (nextResetVersion > sharedResetVersion) {
+          sharedResetVersion = nextResetVersion;
+          state = {
+            ...state,
+            selectedValue: null,
+            revealed: false,
+            ready: false,
+          };
+          publishState({ syncShared: false });
+        }
+
+        const nextPhaseVersion = numberFromBigInt(sharedRoomRecord.phaseVersion);
+        if (nextPhaseVersion >= sharedPhaseUpdatedAt) {
+          sharedPhaseUpdatedAt = nextPhaseVersion;
+          sharedPhase = normalizeSharedPhase(sharedRoomRecord.phase);
+          state = {
+            ...state,
+            revealed: sharedPhase === "revealed" && Boolean(state.selectedValue),
+          };
+        }
+      }
+
       function participantRows() {
         const byId = new Map();
+        const revealedByParticipant = new Map(
+          revealedVoteRecords.map((vote) => [vote.participantId, vote])
+        );
 
-        presenceRows.forEach((participant) => {
-          const previous = byId.get(participant.id);
-          if (!previous || participant.updatedAt >= previous.updatedAt) {
-            byId.set(participant.id, participant);
+        participantRecords.forEach((participant) => {
+          if (!participant.connected && participant.participantId !== participantId) {
+            return;
+          }
+
+          const revealedVote = revealedByParticipant.get(participant.participantId);
+          const revealed =
+            sharedPhase === "revealed" &&
+            participant.hasSelection &&
+            Boolean(revealedVote?.selectedValue);
+          const row = {
+            id: participant.id,
+            participantId: participant.participantId,
+            name: participant.name || "Guest",
+            ready: Boolean(participant.ready),
+            hasSelection: Boolean(participant.hasSelection),
+            revealed,
+            selectedValue: revealed ? revealedVote.selectedValue : null,
+            phase: sharedPhase,
+            phaseUpdatedAt: sharedPhaseUpdatedAt,
+            updatedAt: timestampToMillis(participant.updatedAt),
+          };
+          const previous = byId.get(row.id);
+          if (!previous || row.updatedAt >= previous.updatedAt) {
+            byId.set(row.id, row);
           }
         });
 
         if (!isPublicView) {
           const local = localParticipantRow();
           const existingLocal = byId.get(local.id);
-          if (!existingLocal || canTrackPresence) {
-            byId.set(local.id, { ...existingLocal, ...local });
-          }
+          byId.set(local.id, { ...existingLocal, ...local });
         }
 
         return [...byId.values()].sort((a, b) => {
-          if (a.id === participantId) return -1;
-          if (b.id === participantId) return 1;
+          if (a.participantId === participantId) return -1;
+          if (b.participantId === participantId) return 1;
           return a.name.localeCompare(b.name);
         });
       }
 
-      function updatePresenceRows() {
-        if (!roomChannel) return;
+      function refreshSpacetimeRows(connection = spacetimeConnection) {
+        if (!connection || connection !== spacetimeConnection) return;
 
-        presenceRows = Object.values(roomChannel.presenceState())
-          .flat()
-          .map((payload) => ({
-            id: payload.id,
-            name: payload.name || "Guest",
-            ready: Boolean(payload.ready),
-            hasSelection: Boolean(payload.hasSelection),
-            revealed: Boolean(payload.revealed),
-            selectedValue: payload.selectedValue ?? null,
-            phase: normalizeSharedPhase(payload.phase),
-            phaseUpdatedAt: Number(payload.phaseUpdatedAt) || 0,
-            updatedAt: Number(payload.updatedAt) || 0,
-          }))
-          .filter((participant) => participant.id);
-
-        const latestPhase = presenceRows.reduce(
-          (latest, participant) =>
-            participant.phaseUpdatedAt > latest.phaseUpdatedAt
-              ? { phase: participant.phase, phaseUpdatedAt: participant.phaseUpdatedAt }
-              : latest,
-          { phase: sharedPhase, phaseUpdatedAt: sharedPhaseUpdatedAt }
+        sharedRoomRecord =
+          [...connection.db.room.iter()].find((record) => record.roomId === roomId) ?? null;
+        participantRecords = [...connection.db.participant.iter()].filter(
+          (record) => record.roomId === roomId
         );
-
-        if (latestPhase.phaseUpdatedAt > sharedPhaseUpdatedAt) {
-          sharedPhase = latestPhase.phase;
-          sharedPhaseUpdatedAt = latestPhase.phaseUpdatedAt;
-          state = {
-            ...state,
-            revealed: sharedPhase === "revealed" && Boolean(state.selectedValue),
-          };
-        }
-
+        revealedVoteRecords = [...connection.db.revealedVote.iter()].filter(
+          (record) => record.roomId === roomId
+        );
+        applySharedRowsToState();
         render();
       }
 
@@ -1263,106 +1338,163 @@
         connectionDot.classList.toggle("is-online", online);
       }
 
-      function scheduleRealtimeReconnect() {
-        if (!isSharedMode || !supabase) return;
+      function getSpacetimeToken() {
+        try {
+          return localStorage.getItem(spacetimeTokenKey) ?? undefined;
+        } catch {
+          return undefined;
+        }
+      }
+
+      function saveSpacetimeToken(token) {
+        if (!token) return;
+        try {
+          localStorage.setItem(spacetimeTokenKey, token);
+        } catch {
+          // Anonymous reconnect still works; it just receives a new identity.
+        }
+      }
+
+      function scheduleSpacetimeReconnect() {
+        if (!isSharedMode) return;
 
         clearTimeout(reconnectTimer);
-        const delay = Math.min(1000 * 2 ** reconnectAttempt, 8000);
+        const delay = Math.min(600 * 2 ** reconnectAttempt, 5000);
         reconnectAttempt += 1;
         reconnectTimer = setTimeout(() => {
-          connectRealtimeRoom();
+          connectSpacetimeRoom();
         }, delay);
       }
 
-      async function connectRealtimeRoom() {
-        if (!supabase) return;
+      function watchSpacetimeTable(connection, table) {
+        const refresh = () => refreshSpacetimeRows(connection);
+        table.onInsert(refresh);
+        table.onUpdate(refresh);
+        table.onDelete(refresh);
+      }
 
-        const connectSequence = ++realtimeConnectSequence;
-        const previousChannel = roomChannel;
-        roomChannel = null;
-        presenceReady = false;
-        setConnectionState(reconnectAttempt > 0 ? "Retrying" : "Connecting");
+      function subscribeSpacetimeRoom(connection, connectSequence) {
+        watchSpacetimeTable(connection, connection.db.room);
+        watchSpacetimeTable(connection, connection.db.participant);
+        watchSpacetimeTable(connection, connection.db.revealedVote);
 
-        if (previousChannel) {
-          try {
-            await supabase.removeChannel(previousChannel);
-          } catch {
-            // A stale channel can already be closed by the time a retry starts.
-          }
-        }
+        spacetimeSubscription = connection
+          .subscriptionBuilder()
+          .onApplied(() => {
+            if (connectSequence !== spacetimeConnectSequence || connection !== spacetimeConnection) {
+              return;
+            }
 
-        if (connectSequence !== realtimeConnectSequence) {
+            spacetimeReady = true;
+            reconnectAttempt = 0;
+            setConnectionState("Online", true);
+            sharedNotice.textContent = "";
+            refreshSpacetimeRows(connection);
+            scheduleSharedStateSync();
+            flushPendingSharedReducers();
+          })
+          .onError(() => {
+            if (connectSequence !== spacetimeConnectSequence || connection !== spacetimeConnection) {
+              return;
+            }
+
+            spacetimeReady = false;
+            setConnectionState("Retrying");
+            sharedNotice.textContent = "Still joining the room. Sync will retry automatically.";
+            scheduleSpacetimeReconnect();
+          })
+          .subscribe([
+            `SELECT * FROM room WHERE room_id = '${roomId}'`,
+            `SELECT * FROM participant WHERE room_id = '${roomId}'`,
+            `SELECT * FROM revealed_vote WHERE room_id = '${roomId}'`,
+          ]);
+      }
+
+      function connectSpacetimeRoom() {
+        const bindings = window.PlanningCardsSpacetime;
+        if (!bindings?.DbConnection) {
+          connectionLabel.textContent = "Config missing";
+          sharedNotice.textContent = "Missing spacetime-client.js. Run npm run build.";
           return;
         }
 
-        const nextChannel = supabase.channel(`planning-cards:${roomId}`, {
-          config: {
-            broadcast: { self: false },
-            presence: { key: participantId },
-          },
-        });
-        roomChannel = nextChannel;
+        const connectSequence = ++spacetimeConnectSequence;
+        const previousConnection = spacetimeConnection;
+        spacetimeConnection = null;
+        spacetimeSubscription = null;
+        spacetimeReady = false;
+        setConnectionState(reconnectAttempt > 0 ? "Retrying" : "Connecting");
 
-        nextChannel
-          .on("presence", { event: "sync" }, updatePresenceRows)
-          .on("presence", { event: "join" }, updatePresenceRows)
-          .on("presence", { event: "leave" }, updatePresenceRows)
-          .on("broadcast", { event: "room" }, ({ payload }) => applyRoomEvent(payload))
-          .subscribe((status) => {
-            if (connectSequence !== realtimeConnectSequence || nextChannel !== roomChannel) {
-              return;
-            }
+        if (previousConnection) {
+          try {
+            previousConnection.disconnect();
+          } catch {
+            // A stale socket can already be closed by the time a retry starts.
+          }
+        }
 
-            if (status === "SUBSCRIBED") {
-              reconnectAttempt = 0;
-              presenceReady = true;
-              setConnectionState("Online", true);
-              schedulePresenceSync();
-              sharedNotice.textContent = "";
-              return;
-            }
+        try {
+          const connection = bindings.DbConnection.builder()
+            .withUri(spacetimeConfig.uri)
+            .withDatabaseName(spacetimeConfig.database)
+            .withToken(getSpacetimeToken())
+            .withConfirmedReads(false)
+            .onConnect((connection, _identity, token) => {
+              if (connectSequence !== spacetimeConnectSequence) {
+                connection.disconnect();
+                return;
+              }
 
-            presenceReady = false;
+              saveSpacetimeToken(token);
+              spacetimeConnection = connection;
+              subscribeSpacetimeRoom(connection, connectSequence);
+            })
+            .onConnectError((_ctx, error) => {
+              if (connectSequence !== spacetimeConnectSequence) {
+                return;
+              }
 
-            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+              console.error(error);
+              spacetimeReady = false;
               setConnectionState("Retrying");
-              sharedNotice.textContent = "Still joining the room. Sync will start automatically.";
-              scheduleRealtimeReconnect();
-              return;
-            }
+              sharedNotice.textContent = "Still joining the room. Sync will retry automatically.";
+              scheduleSpacetimeReconnect();
+            })
+            .onDisconnect((_ctx, error) => {
+              if (connectSequence !== spacetimeConnectSequence) {
+                return;
+              }
 
-            setConnectionState("Connecting");
-          });
+              if (error) console.error(error);
+              spacetimeReady = false;
+              setConnectionState("Retrying");
+              sharedNotice.textContent = "Room connection dropped. Reconnecting automatically.";
+              scheduleSpacetimeReconnect();
+            })
+            .build();
+
+          spacetimeConnection = connection;
+        } catch (error) {
+          if (connectSequence !== spacetimeConnectSequence) {
+            return;
+          }
+
+          console.error(error);
+          spacetimeReady = false;
+          setConnectionState("Retrying");
+          sharedNotice.textContent = "Room connection failed.";
+          scheduleSpacetimeReconnect();
+        }
       }
 
-      async function initSharedMode() {
+      function initSharedMode() {
         if (!isSharedMode) return;
 
         roomPill.textContent = roomId;
         roomName.textContent = `Room ${roomId}`;
         participantNameInput.value = participantName;
         render();
-
-        if (!supabaseConfig.url || !supabaseConfig.anonKey) {
-          connectionLabel.textContent = "Config missing";
-          sharedNotice.textContent = "Add supabase-config.js values to sync this room.";
-          return;
-        }
-
-        setConnectionState("Connecting");
-
-        try {
-          const { createClient } = await import(supabaseClientUrl);
-          supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
-            auth: { persistSession: false, autoRefreshToken: false },
-          });
-          await connectRealtimeRoom();
-        } catch (error) {
-          setConnectionState("Retrying");
-          sharedNotice.textContent = "Realtime connection failed.";
-          console.error(error);
-          scheduleRealtimeReconnect();
-        }
+        connectSpacetimeRoom();
       }
 
       function renderPersonalCard() {
@@ -1779,7 +1911,7 @@
       participantNameInput.addEventListener("input", () => {
         participantName = participantNameInput.value.trim() || "Guest";
         localStorage.setItem(participantNameKey, participantName);
-        schedulePresenceSync();
+        scheduleSharedStateSync();
         render();
       });
 

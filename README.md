@@ -27,9 +27,9 @@ Hosted:
 
 Simplest:
 
-Open `index.html` in your browser.
+Open `index.html` in your browser. No Python or build step is required for the standalone controller.
 
-Recommended for two synced tabs:
+Recommended for two synced tabs and clean local URLs:
 
 ```sh
 python3 -m http.server 4173 --bind 127.0.0.1
@@ -45,20 +45,19 @@ The controller also has a `Display` button that opens the public tab.
 
 ## Shared Rooms
 
-Hosted shared rooms are already configured with a public Supabase publishable key.
+Hosted shared rooms use the SpacetimeDB Maincloud database `planning-cards`.
 
-For another deployment, update `supabase-config.js`:
+Open a room URL such as `/?room=abc123`. Hidden card values stay in a private server table; clients only receive `hasSelection` until someone clicks `Reveal All`.
 
-```js
-window.PLANNING_CARDS_SUPABASE = {
-  url: "https://your-project-ref.supabase.co",
-  anonKey: "your-publishable-or-anon-key",
-};
+When changing the shared backend:
+
+```sh
+npm install
+npm install --prefix spacetimedb
+spacetime publish planning-cards --server maincloud -p spacetimedb --yes
+npm run generate:spacetime
+npm run build
 ```
-
-Then open a room URL such as `/?room=abc123`.
-
-This app uses Supabase Realtime Presence and Broadcast only; no database tables or migrations are required.
 
 ## Test
 

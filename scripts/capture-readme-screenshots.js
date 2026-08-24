@@ -88,11 +88,12 @@ async function main() {
     const sharedContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const sharedController = await sharedContext.newPage();
     const sharedPublic = await sharedContext.newPage();
+    const sharedRoom = `screenshots-${Date.now()}`;
 
-    await sharedController.goto(`${baseUrl}/?room=demo-table`);
+    await sharedController.goto(`${baseUrl}/?room=${sharedRoom}`);
     await sharedController.evaluate(() => localStorage.clear());
     await sharedController.reload();
-    await sharedPublic.goto(`${baseUrl}/?room=demo-table&view=public`);
+    await sharedPublic.goto(`${baseUrl}/?room=${sharedRoom}&view=public`);
 
     await disableMotion(sharedController);
     await disableMotion(sharedPublic);
