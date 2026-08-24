@@ -169,7 +169,7 @@ test("shared room syncs readiness and cards across two participants and a public
     await expect(alice.locator(".participant-value")).toHaveText("13");
     await expect(bob.locator(".participant-value")).toHaveText("5");
 
-    await controllerA.getByRole("button", { name: "Reset" }).click();
+    await controllerA.getByRole("button", { name: "Reset Room" }).click();
 
     await expect(alice.locator(".ready-badge")).toHaveText("Waiting");
     await expect(bob.locator(".ready-badge")).toHaveText("Waiting");

@@ -863,6 +863,9 @@
       let presenceReady = false;
       let presenceRows = [];
       let presenceTimer = null;
+      let reconnectTimer = null;
+      let reconnectAttempt = 0;
+      let realtimeConnectSequence = 0;
 
       function normalizeRoomId(value) {
         return value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
@@ -1158,6 +1161,83 @@
         render();
       }
 
+      function setConnectionState(label, online = false) {
+        connectionLabel.textContent = label;
+        connectionDot.classList.toggle("is-online", online);
+      }
+
+      function scheduleRealtimeReconnect() {
+        if (!isSharedMode || !supabase) return;
+
+        clearTimeout(reconnectTimer);
+        const delay = Math.min(1000 * 2 ** reconnectAttempt, 8000);
+        reconnectAttempt += 1;
+        reconnectTimer = setTimeout(() => {
+          connectRealtimeRoom();
+        }, delay);
+      }
+
+      async function connectRealtimeRoom() {
+        if (!supabase) return;
+
+        const connectSequence = ++realtimeConnectSequence;
+        const previousChannel = roomChannel;
+        roomChannel = null;
+        presenceReady = false;
+        setConnectionState(reconnectAttempt > 0 ? "Retrying" : "Connecting");
+
+        if (previousChannel) {
+          try {
+            await supabase.removeChannel(previousChannel);
+          } catch {
+            // A stale channel can already be closed by the time a retry starts.
+          }
+        }
+
+        if (connectSequence !== realtimeConnectSequence) {
+          return;
+        }
+
+        const nextChannel = supabase.channel(`planning-cards:${roomId}`, {
+          config: {
+            broadcast: { self: false },
+            presence: { key: participantId },
+          },
+        });
+        roomChannel = nextChannel;
+
+        nextChannel
+          .on("presence", { event: "sync" }, updatePresenceRows)
+          .on("presence", { event: "join" }, updatePresenceRows)
+          .on("presence", { event: "leave" }, updatePresenceRows)
+          .on("broadcast", { event: "room" }, ({ payload }) => applyRoomEvent(payload))
+          .subscribe((status) => {
+            if (connectSequence !== realtimeConnectSequence || nextChannel !== roomChannel) {
+              return;
+            }
+
+            if (status === "SUBSCRIBED") {
+              reconnectAttempt = 0;
+              presenceReady = true;
+              setConnectionState("Online", true);
+              schedulePresenceSync();
+              sharedNotice.textContent = "";
+              return;
+            }
+
+            presenceReady = false;
+
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+              setConnectionState("Retrying");
+              sharedNotice.textContent = "Still joining the room. Sync will start automatically.";
+              scheduleRealtimeReconnect();
+              return;
+            }
+
+            setConnectionState("Connecting");
+          });
+      }
+
       async function initSharedMode() {
         if (!isSharedMode) return;
 
@@ -1172,40 +1252,19 @@
           return;
         }
 
-        connectionLabel.textContent = "Connecting";
+        setConnectionState("Connecting");
 
         try {
           const { createClient } = await import(supabaseClientUrl);
           supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
             auth: { persistSession: false, autoRefreshToken: false },
           });
-          roomChannel = supabase.channel(`planning-cards:${roomId}`, {
-            config: {
-              broadcast: { self: false },
-              presence: { key: participantId },
-            },
-          });
-
-          roomChannel
-            .on("presence", { event: "sync" }, updatePresenceRows)
-            .on("presence", { event: "join" }, updatePresenceRows)
-            .on("presence", { event: "leave" }, updatePresenceRows)
-            .on("broadcast", { event: "room" }, ({ payload }) => applyRoomEvent(payload))
-            .subscribe((status) => {
-              connectionLabel.textContent =
-                status === "SUBSCRIBED" ? "Online" : status.toLowerCase();
-              connectionDot.classList.toggle("is-online", status === "SUBSCRIBED");
-
-              if (status === "SUBSCRIBED") {
-                presenceReady = true;
-                schedulePresenceSync();
-                sharedNotice.textContent = "";
-              }
-            });
+          await connectRealtimeRoom();
         } catch (error) {
-          connectionLabel.textContent = "Offline";
+          setConnectionState("Retrying");
           sharedNotice.textContent = "Realtime connection failed.";
           console.error(error);
+          scheduleRealtimeReconnect();
         }
       }
 
@@ -1328,7 +1387,7 @@
           : state.revealed
             ? "Hide"
             : "Reveal";
-        clearButton.textContent = isSharedMode ? "Reset" : "Clear";
+        clearButton.textContent = isSharedMode ? "Reset Room" : "Clear";
         stateLabel.textContent = state.revealed
           ? "Revealed"
           : state.ready
