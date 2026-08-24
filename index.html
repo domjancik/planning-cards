@@ -858,6 +858,7 @@
       let enterTimer = null;
       let exitTimer = null;
       let sharedPhase = state.revealed ? "revealed" : "voting";
+      let sharedPhaseUpdatedAt = 0;
       let supabase = null;
       let roomChannel = null;
       let presenceReady = false;
@@ -974,7 +975,7 @@
 
         state = normalized;
         if (isSharedMode) {
-          sharedPhase = state.revealed ? "revealed" : sharedPhase;
+          state.revealed = sharedPhase === "revealed" && Boolean(state.selectedValue);
         }
         render();
       }
@@ -1012,20 +1013,16 @@
 
       function clearSelection() {
         if (isSharedMode) {
-          if (roomChannel) {
-            roomChannel.send({
-              type: "broadcast",
-              event: "room",
-              payload: { type: "reset", at: Date.now() },
-            });
-          }
+          const eventAt = nextSharedPhaseTimestamp();
           sharedPhase = "voting";
+          sharedPhaseUpdatedAt = eventAt;
           state = {
             ...state,
             selectedValue: null,
             revealed: false,
             ready: false,
           };
+          broadcastRoomEvent("reset", eventAt);
           publishState();
           return;
         }
@@ -1039,37 +1036,65 @@
         publishState();
       }
 
-      function setSharedPhase(nextPhase, broadcast) {
-        sharedPhase = nextPhase;
+      function nextSharedPhaseTimestamp() {
+        return Math.max(Date.now(), sharedPhaseUpdatedAt + 1);
+      }
+
+      function normalizeSharedPhase(value) {
+        return value === "revealed" ? "revealed" : "voting";
+      }
+
+      function broadcastRoomEvent(type, at) {
+        if (!roomChannel) return;
+
+        roomChannel.send({
+          type: "broadcast",
+          event: "room",
+          payload: { type, at },
+        });
+      }
+
+      function setSharedPhase(nextPhase, broadcast, at = nextSharedPhaseTimestamp()) {
+        if (at < sharedPhaseUpdatedAt) {
+          return;
+        }
+
+        sharedPhaseUpdatedAt = at;
+        sharedPhase = normalizeSharedPhase(nextPhase);
+        const isRevealedPhase = sharedPhase === "revealed";
+        const eventType = isRevealedPhase ? "reveal" : "hide";
         state = {
           ...state,
-          revealed: nextPhase === "revealed" && Boolean(state.selectedValue),
+          revealed: isRevealedPhase && Boolean(state.selectedValue),
         };
 
-        if (broadcast && roomChannel) {
-          roomChannel.send({
-            type: "broadcast",
-            event: "room",
-            payload: { type: nextPhase === "revealed" ? "reveal" : "hide", at: Date.now() },
-          });
+        if (broadcast) {
+          broadcastRoomEvent(eventType, at);
         }
 
         publishState();
       }
 
       function applyRoomEvent(payload) {
+        const eventAt = Number.isFinite(payload?.at) ? payload.at : nextSharedPhaseTimestamp();
+
         if (payload?.type === "reveal") {
-          setSharedPhase("revealed", false);
+          setSharedPhase("revealed", false, eventAt);
           return;
         }
 
         if (payload?.type === "hide") {
-          setSharedPhase("voting", false);
+          setSharedPhase("voting", false, eventAt);
           return;
         }
 
         if (payload?.type === "reset") {
+          if (eventAt < sharedPhaseUpdatedAt) {
+            return;
+          }
+
           sharedPhase = "voting";
+          sharedPhaseUpdatedAt = eventAt;
           state = {
             ...state,
             selectedValue: null,
@@ -1091,6 +1116,8 @@
           hasSelection,
           revealed,
           selectedValue: revealed ? state.selectedValue : null,
+          phase: sharedPhase,
+          phaseUpdatedAt: sharedPhaseUpdatedAt,
           updatedAt: Date.now(),
         };
       }
@@ -1150,12 +1177,27 @@
             hasSelection: Boolean(payload.hasSelection),
             revealed: Boolean(payload.revealed),
             selectedValue: payload.selectedValue ?? null,
+            phase: normalizeSharedPhase(payload.phase),
+            phaseUpdatedAt: Number(payload.phaseUpdatedAt) || 0,
             updatedAt: Number(payload.updatedAt) || 0,
           }))
           .filter((participant) => participant.id);
 
-        if (presenceRows.some((participant) => participant.revealed)) {
-          sharedPhase = "revealed";
+        const latestPhase = presenceRows.reduce(
+          (latest, participant) =>
+            participant.phaseUpdatedAt > latest.phaseUpdatedAt
+              ? { phase: participant.phase, phaseUpdatedAt: participant.phaseUpdatedAt }
+              : latest,
+          { phase: sharedPhase, phaseUpdatedAt: sharedPhaseUpdatedAt }
+        );
+
+        if (latestPhase.phaseUpdatedAt > sharedPhaseUpdatedAt) {
+          sharedPhase = latestPhase.phase;
+          sharedPhaseUpdatedAt = latestPhase.phaseUpdatedAt;
+          state = {
+            ...state,
+            revealed: sharedPhase === "revealed" && Boolean(state.selectedValue),
+          };
         }
 
         render();
@@ -1316,6 +1358,22 @@
         );
       }
 
+      function participantIsRevealed(participant) {
+        if (!participant.hasSelection || !participant.selectedValue) {
+          return false;
+        }
+
+        if (participant.phaseUpdatedAt < sharedPhaseUpdatedAt) {
+          return sharedPhase === "revealed";
+        }
+
+        if (participant.phaseUpdatedAt > sharedPhaseUpdatedAt) {
+          return participant.phase === "revealed";
+        }
+
+        return participant.phase === "revealed" && participant.revealed;
+      }
+
       function renderSharedTable() {
         if (!isSharedMode) return;
 
@@ -1349,8 +1407,9 @@
 
             const card = document.createElement("div");
             card.className = "participant-card";
+            const isRevealed = participantIsRevealed(participant);
 
-            if (participant.revealed && participant.selectedValue) {
+            if (isRevealed) {
               card.classList.add("is-revealed");
               const value = document.createElement("div");
               value.className = `participant-value${

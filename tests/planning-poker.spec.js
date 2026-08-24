@@ -169,6 +169,31 @@ test("shared room syncs readiness and cards across two participants and a public
     await expect(alice.locator(".participant-value")).toHaveText("13");
     await expect(bob.locator(".participant-value")).toHaveText("5");
 
+    await controllerA.getByRole("button", { name: "Hide All" }).click();
+
+    await expect(controllerA.getByRole("button", { name: "Reveal All" })).toBeVisible();
+    await expect(controllerB.getByRole("button", { name: "Reveal All" })).toBeVisible();
+    await expect(alice.locator(".participant-card")).toHaveClass(/is-hidden/);
+    await expect(bob.locator(".participant-card")).toHaveClass(/is-hidden/);
+    await expect(alice.locator(".participant-card")).not.toHaveClass(/is-revealed/);
+    await expect(bob.locator(".participant-card")).not.toHaveClass(/is-revealed/);
+    await expect(alice.locator(".participant-value")).toHaveCount(0);
+    await expect(bob.locator(".participant-value")).toHaveCount(0);
+
+    await publicDisplay.waitForTimeout(700);
+
+    await expect(alice.locator(".participant-card")).toHaveClass(/is-hidden/);
+    await expect(bob.locator(".participant-card")).toHaveClass(/is-hidden/);
+    await expect(alice.locator(".participant-value")).toHaveCount(0);
+    await expect(bob.locator(".participant-value")).toHaveCount(0);
+
+    await controllerA.getByRole("button", { name: "Reveal All" }).click();
+
+    await expect(alice.locator(".participant-card")).toHaveClass(/is-revealed/);
+    await expect(bob.locator(".participant-card")).toHaveClass(/is-revealed/);
+    await expect(alice.locator(".participant-value")).toHaveText("13");
+    await expect(bob.locator(".participant-value")).toHaveText("5");
+
     await controllerA.getByRole("button", { name: "Reset Room" }).click();
 
     await expect(alice.locator(".ready-badge")).toHaveText("Waiting");
