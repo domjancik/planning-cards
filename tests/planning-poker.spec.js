@@ -2,7 +2,7 @@ const { test, expect } = require("@playwright/test");
 
 async function openCleanController(context) {
   const page = await context.newPage();
-  await page.goto("/");
+  await page.goto(".");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   return page;
@@ -50,7 +50,7 @@ test("controller exposes the expected private controls", async ({ context }) => 
 test("public display starts as an empty card field", async ({ context }) => {
   const controller = await openCleanController(context);
   const publicDisplay = await context.newPage();
-  await publicDisplay.goto("/?view=public");
+  await publicDisplay.goto("?view=public");
   await disableTransitions(publicDisplay);
 
   await expect(publicDisplay.locator(".topbar")).toBeHidden();
@@ -68,7 +68,7 @@ test("public display starts as an empty card field", async ({ context }) => {
 test("public display syncs selected face-down and revealed card states", async ({ context }) => {
   const controller = await openCleanController(context);
   const publicDisplay = await context.newPage();
-  await publicDisplay.goto("/?view=public");
+  await publicDisplay.goto("?view=public");
   await disableTransitions(controller);
   await disableTransitions(publicDisplay);
 
@@ -100,7 +100,7 @@ test("public display syncs selected face-down and revealed card states", async (
 test("card slides in when placed and out when cleared", async ({ context }) => {
   const controller = await openCleanController(context);
   const publicDisplay = await context.newPage();
-  await publicDisplay.goto("/?view=public");
+  await publicDisplay.goto("?view=public");
 
   await controller.getByRole("button", { name: "Select 5" }).click();
 
@@ -131,9 +131,9 @@ test("shared room syncs readiness and cards across two participants and a public
     const controllerB = await controllerBContext.newPage();
     const publicDisplay = await publicContext.newPage();
 
-    await controllerA.goto(`/?room=${room}`);
-    await controllerB.goto(`/?room=${room}`);
-    await publicDisplay.goto(`/?room=${room}&view=public`);
+    await controllerA.goto(`?room=${room}`);
+    await controllerB.goto(`?room=${room}`);
+    await publicDisplay.goto(`?room=${room}&view=public`);
     await disableTransitions(controllerA);
     await disableTransitions(controllerB);
     await disableTransitions(publicDisplay);

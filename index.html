@@ -1120,10 +1120,12 @@
           }
         });
 
-        const local = localParticipantRow();
-        const existingLocal = byId.get(local.id);
-        if (!existingLocal || canTrackPresence) {
-          byId.set(local.id, { ...existingLocal, ...local });
+        if (!isPublicView) {
+          const local = localParticipantRow();
+          const existingLocal = byId.get(local.id);
+          if (!existingLocal || canTrackPresence) {
+            byId.set(local.id, { ...existingLocal, ...local });
+          }
         }
 
         return [...byId.values()].sort((a, b) => {
