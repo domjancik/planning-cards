@@ -150,10 +150,14 @@ test("shared room syncs readiness and cards across two participants and a public
     await controllerA.getByRole("button", { name: "Select 13" }).click();
     await controllerB.getByRole("button", { name: "Select 5" }).click();
 
+    const controllerAlice = controllerA.locator("#sharedTable .participant").filter({ hasText: "Alice" });
+    const controllerAliceCard = controllerAlice.locator(".participant-card");
     const participants = publicDisplay.locator("#sharedTable .participant");
     const alice = participants.filter({ hasText: "Alice" });
     const bob = participants.filter({ hasText: "Bob" });
 
+    await expect(controllerAliceCard).toHaveClass(/is-entering/);
+    await expect(controllerAliceCard).toHaveCSS("animation-name", "cardSlideIn");
     await expect(participants).toHaveCount(2, { timeout: 12_000 });
     await expect(alice.locator(".ready-badge")).toHaveText("Ready");
     await expect(bob.locator(".ready-badge")).toHaveText("Ready");
@@ -164,6 +168,8 @@ test("shared room syncs readiness and cards across two participants and a public
 
     await controllerA.getByRole("button", { name: "Reveal All" }).click();
 
+    await expect(controllerAliceCard).toHaveClass(/is-revealing/);
+    await expect(controllerAliceCard).toHaveCSS("animation-name", "sharedCardReveal");
     await expect(alice.locator(".participant-card")).toHaveClass(/is-revealed/);
     await expect(bob.locator(".participant-card")).toHaveClass(/is-revealed/);
     await expect(alice.locator(".participant-value")).toHaveText("13");
@@ -171,6 +177,8 @@ test("shared room syncs readiness and cards across two participants and a public
 
     await controllerA.getByRole("button", { name: "Hide All" }).click();
 
+    await expect(controllerAliceCard).toHaveClass(/is-hiding/);
+    await expect(controllerAliceCard).toHaveCSS("animation-name", "sharedCardHide");
     await expect(controllerA.getByRole("button", { name: "Reveal All" })).toBeVisible();
     await expect(controllerB.getByRole("button", { name: "Reveal All" })).toBeVisible();
     await expect(alice.locator(".participant-card")).toHaveClass(/is-hidden/);
@@ -196,6 +204,8 @@ test("shared room syncs readiness and cards across two participants and a public
 
     await controllerA.getByRole("button", { name: "Reset Room" }).click();
 
+    await expect(controllerAliceCard).toHaveClass(/is-exiting/);
+    await expect(controllerAliceCard).toHaveCSS("animation-name", "cardSlideOut");
     await expect(alice.locator(".ready-badge")).toHaveText("Waiting");
     await expect(bob.locator(".ready-badge")).toHaveText("Waiting");
     await expect(alice.locator(".participant-card")).not.toHaveClass(/is-hidden/);

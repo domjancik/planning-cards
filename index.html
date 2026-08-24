@@ -515,6 +515,7 @@
         border-radius: 8px;
         background: rgba(255, 255, 255, 0.74);
         box-shadow: 0 10px 28px rgba(24, 32, 43, 0.08);
+        perspective: 900px;
       }
 
       .participant-head {
@@ -572,6 +573,10 @@
         border-radius: 8px;
         overflow: hidden;
         background: rgba(255, 255, 255, 0.38);
+        transform-origin: 50% 100%;
+        will-change: transform, opacity;
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
       }
 
       .participant-card.is-hidden,
@@ -610,6 +615,46 @@
         font-size: clamp(2.2rem, 8vw, 4.2rem);
         font-weight: 900;
         text-shadow: 0 2px 18px rgba(0, 0, 0, 0.24);
+      }
+
+      .participant-card.is-entering {
+        animation: cardSlideIn 360ms cubic-bezier(0.18, 0.84, 0.22, 1);
+      }
+
+      .participant-card.is-exiting {
+        animation: cardSlideOut 300ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+
+      .participant-card.is-revealing {
+        animation: sharedCardReveal 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      .participant-card.is-hiding {
+        animation: sharedCardHide 320ms cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      @keyframes sharedCardReveal {
+        from {
+          opacity: 0.7;
+          transform: rotateY(-78deg) scale(0.98);
+        }
+
+        to {
+          opacity: 1;
+          transform: rotateY(0) scale(1);
+        }
+      }
+
+      @keyframes sharedCardHide {
+        from {
+          opacity: 0.7;
+          transform: rotateY(78deg) scale(0.98);
+        }
+
+        to {
+          opacity: 1;
+          transform: rotateY(0) scale(1);
+        }
       }
 
       .participant-value {
@@ -830,6 +875,12 @@
         "BroadcastChannel" in window ? new BroadcastChannel(channelName) : null;
       const slideOutMs = 320;
       const slideInMs = 380;
+      const sharedCardAnimationMs = {
+        enter: 380,
+        exit: 340,
+        reveal: 380,
+        hide: 340,
+      };
 
       const deck = document.querySelector("#deck");
       const displayCard = document.querySelector("#displayCard");
@@ -867,6 +918,7 @@
       let reconnectTimer = null;
       let reconnectAttempt = 0;
       let realtimeConnectSequence = 0;
+      const sharedCardVisuals = new Map();
 
       function normalizeRoomId(value) {
         return value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
@@ -1374,10 +1426,161 @@
         return participant.phase === "revealed" && participant.revealed;
       }
 
+      function sharedCardLogicalVisual(participant) {
+        if (participantIsRevealed(participant)) {
+          return {
+            state: "revealed",
+            value: participant.selectedValue,
+          };
+        }
+
+        if (participant.hasSelection) {
+          return {
+            state: "hidden",
+            value: null,
+          };
+        }
+
+        return {
+          state: "empty",
+          value: null,
+        };
+      }
+
+      function clearSharedCardAnimation(visual) {
+        clearTimeout(visual.timer);
+        visual.timer = null;
+        visual.animationClass = "";
+      }
+
+      function scheduleSharedCardAnimation(participantId, visual, animationClass, duration, onComplete) {
+        clearTimeout(visual.timer);
+        visual.animationToken += 1;
+        const animationToken = visual.animationToken;
+        visual.animationClass = animationClass;
+        visual.timer = setTimeout(() => {
+          const latest = sharedCardVisuals.get(participantId);
+
+          if (!latest || latest.animationToken !== animationToken) {
+            return;
+          }
+
+          latest.animationClass = "";
+          latest.timer = null;
+          onComplete?.(latest);
+          render();
+        }, duration);
+      }
+
+      function sharedCardVisualFor(participant) {
+        const logical = sharedCardLogicalVisual(participant);
+        let visual = sharedCardVisuals.get(participant.id);
+
+        if (!visual) {
+          visual = {
+            targetState: logical.state,
+            targetValue: logical.value,
+            visualState: logical.state,
+            visualValue: logical.value,
+            animationClass: "",
+            animationToken: 0,
+            timer: null,
+          };
+          sharedCardVisuals.set(participant.id, visual);
+          return visual;
+        }
+
+        if (visual.targetState === logical.state && visual.targetValue === logical.value) {
+          return visual;
+        }
+
+        const previousTargetState = visual.targetState;
+        const previousVisualState = visual.visualState;
+        const previousVisualValue = visual.visualValue;
+
+        visual.targetState = logical.state;
+        visual.targetValue = logical.value;
+
+        if (logical.state === "empty") {
+          if (previousVisualState === "empty") {
+            visual.visualState = "empty";
+            visual.visualValue = null;
+            clearSharedCardAnimation(visual);
+            return visual;
+          }
+
+          visual.visualState = previousVisualState;
+          visual.visualValue = previousVisualValue;
+          scheduleSharedCardAnimation(
+            participant.id,
+            visual,
+            "is-exiting",
+            sharedCardAnimationMs.exit,
+            (latest) => {
+              if (latest.targetState === "empty") {
+                latest.visualState = "empty";
+                latest.visualValue = null;
+              }
+            }
+          );
+          return visual;
+        }
+
+        visual.visualState = logical.state;
+        visual.visualValue = logical.value;
+
+        if (previousVisualState === "empty" || previousTargetState === "empty") {
+          scheduleSharedCardAnimation(
+            participant.id,
+            visual,
+            "is-entering",
+            sharedCardAnimationMs.enter
+          );
+          return visual;
+        }
+
+        if (previousVisualState !== logical.state) {
+          scheduleSharedCardAnimation(
+            participant.id,
+            visual,
+            logical.state === "revealed" ? "is-revealing" : "is-hiding",
+            logical.state === "revealed"
+              ? sharedCardAnimationMs.reveal
+              : sharedCardAnimationMs.hide
+          );
+          return visual;
+        }
+
+        if (logical.state === "revealed" && previousVisualValue !== logical.value) {
+          scheduleSharedCardAnimation(
+            participant.id,
+            visual,
+            "is-revealing",
+            sharedCardAnimationMs.reveal
+          );
+          return visual;
+        }
+
+        clearSharedCardAnimation(visual);
+        return visual;
+      }
+
+      function pruneSharedCardVisuals(rows) {
+        const visibleParticipantIds = new Set(rows.map((participant) => participant.id));
+
+        sharedCardVisuals.forEach((visual, participantId) => {
+          if (!visibleParticipantIds.has(participantId)) {
+            clearTimeout(visual.timer);
+            sharedCardVisuals.delete(participantId);
+          }
+        });
+      }
+
       function renderSharedTable() {
         if (!isSharedMode) return;
 
         const rows = participantRows();
+        pruneSharedCardVisuals(rows);
         sharedTable.replaceChildren(
           ...rows.map((participant) => {
             const item = document.createElement("article");
@@ -1406,18 +1609,20 @@
             badges.append(ready);
 
             const card = document.createElement("div");
-            card.className = "participant-card";
-            const isRevealed = participantIsRevealed(participant);
+            const visual = sharedCardVisualFor(participant);
+            card.className = `participant-card${
+              visual.animationClass ? ` ${visual.animationClass}` : ""
+            }`;
 
-            if (isRevealed) {
+            if (visual.visualState === "revealed") {
               card.classList.add("is-revealed");
               const value = document.createElement("div");
               value.className = `participant-value${
-                participant.selectedValue === "infinite" ? " is-infinite" : ""
+                visual.visualValue === "infinite" ? " is-infinite" : ""
               }`;
-              value.textContent = cardLabel(participant.selectedValue);
+              value.textContent = cardLabel(visual.visualValue);
               card.append(value);
-            } else if (participant.hasSelection) {
+            } else if (visual.visualState === "hidden") {
               card.classList.add("is-hidden");
             }
 
