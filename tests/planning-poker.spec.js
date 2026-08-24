@@ -21,6 +21,43 @@ async function disableTransitions(page) {
   });
 }
 
+async function resetSharedCardAnimationLog(page) {
+  await page.evaluate(() => {
+    window.__sharedCardAnimations = [];
+
+    if (window.__sharedCardAnimationLogInstalled) {
+      return;
+    }
+
+    window.__sharedCardAnimationLogInstalled = true;
+    document.querySelector("#sharedTable")?.addEventListener(
+      "animationstart",
+      (event) => {
+        const card = event.target;
+        if (!(card instanceof HTMLElement) || !card.classList.contains("participant-card")) {
+          return;
+        }
+
+        const participant = card.closest(".participant");
+        const name = participant?.querySelector(".participant-name")?.textContent ?? "";
+        window.__sharedCardAnimations.push({ name, animationName: event.animationName });
+      },
+      true
+    );
+  });
+}
+
+async function sharedCardAnimationCounts(page, animationName) {
+  return page.evaluate((expectedAnimationName) => {
+    return (window.__sharedCardAnimations ?? [])
+      .filter((entry) => entry.animationName === expectedAnimationName)
+      .reduce((counts, entry) => {
+        counts[entry.name] = (counts[entry.name] ?? 0) + 1;
+        return counts;
+      }, {});
+  }, animationName);
+}
+
 test("controller exposes the expected private controls", async ({ context }) => {
   const controller = await openCleanController(context);
   await disableTransitions(controller);
@@ -173,6 +210,7 @@ test("shared room syncs readiness and cards across two participants and a public
     await expect(alice.locator(".participant-value")).toHaveCount(0);
     await expect(bob.locator(".participant-value")).toHaveCount(0);
 
+    await resetSharedCardAnimationLog(publicDisplay);
     await controllerA.getByRole("button", { name: "Reveal All" }).click();
 
     await expect(controllerAliceCard).toHaveClass(/is-revealing/);
@@ -181,7 +219,13 @@ test("shared room syncs readiness and cards across two participants and a public
     await expect(bob.locator(".participant-card")).toHaveClass(/is-revealed/);
     await expect(alice.locator(".participant-value")).toHaveText("13");
     await expect(bob.locator(".participant-value")).toHaveText("5");
+    await publicDisplay.waitForTimeout(700);
 
+    const revealCounts = await sharedCardAnimationCounts(publicDisplay, "sharedCardReveal");
+    expect(revealCounts.Alice).toBe(1);
+    expect(revealCounts.Bob).toBe(1);
+
+    await resetSharedCardAnimationLog(publicDisplay);
     await controllerA.getByRole("button", { name: "Hide All" }).click();
 
     await expect(controllerAliceCard).toHaveClass(/is-hiding/);
@@ -196,6 +240,10 @@ test("shared room syncs readiness and cards across two participants and a public
     await expect(bob.locator(".participant-value")).toHaveCount(0);
 
     await publicDisplay.waitForTimeout(700);
+
+    const hideCounts = await sharedCardAnimationCounts(publicDisplay, "sharedCardHide");
+    expect(hideCounts.Alice).toBe(1);
+    expect(hideCounts.Bob).toBe(1);
 
     await expect(alice.locator(".participant-card")).toHaveClass(/is-hidden/);
     await expect(bob.locator(".participant-card")).toHaveClass(/is-hidden/);

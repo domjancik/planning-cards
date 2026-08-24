@@ -921,6 +921,7 @@
       let reconnectAttempt = 0;
       let realtimeConnectSequence = 0;
       const sharedCardVisuals = new Map();
+      const sharedParticipantElements = new Map();
 
       function normalizeRoomId(value) {
         return value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
@@ -1576,6 +1577,109 @@
             sharedCardVisuals.delete(participantId);
           }
         });
+
+        sharedParticipantElements.forEach((view, participantId) => {
+          if (!visibleParticipantIds.has(participantId)) {
+            view.item.remove();
+            sharedParticipantElements.delete(participantId);
+          }
+        });
+      }
+
+      function sharedParticipantElementFor(participant) {
+        let view = sharedParticipantElements.get(participant.id);
+
+        if (view) {
+          return view;
+        }
+
+        const item = document.createElement("article");
+        item.className = "participant";
+
+        const head = document.createElement("div");
+        head.className = "participant-head";
+
+        const name = document.createElement("div");
+        name.className = "participant-name";
+
+        const badges = document.createElement("div");
+        badges.className = "participant-badges";
+
+        const you = document.createElement("div");
+        you.className = "you-badge";
+        you.textContent = "You";
+
+        const ready = document.createElement("div");
+        badges.append(you, ready);
+
+        const card = document.createElement("div");
+        card.className = "participant-card";
+
+        const value = document.createElement("div");
+        value.className = "participant-value";
+
+        head.append(name, badges);
+        item.append(head, card);
+
+        view = {
+          item,
+          name,
+          you,
+          ready,
+          card,
+          value,
+        };
+        sharedParticipantElements.set(participant.id, view);
+        return view;
+      }
+
+      function updateSharedParticipantElement(participant) {
+        const view = sharedParticipantElementFor(participant);
+        const visual = sharedCardVisualFor(participant);
+        const cardClasses = ["participant-card"];
+
+        if (visual.animationClass) cardClasses.push(visual.animationClass);
+        if (visual.visualState === "revealed") cardClasses.push("is-revealed");
+        if (visual.visualState === "hidden") cardClasses.push("is-hidden");
+
+        view.name.textContent = participant.name;
+        view.you.hidden = !participant.isSelf;
+        view.ready.className = `ready-badge${participant.ready ? " is-ready" : ""}`;
+        view.ready.textContent = participant.ready ? "Ready" : "Waiting";
+
+        const nextCardClassName = cardClasses.join(" ");
+        if (view.card.className !== nextCardClassName) {
+          view.card.className = nextCardClassName;
+        }
+
+        if (visual.visualState === "revealed") {
+          const valueClassName = `participant-value${
+            visual.visualValue === "infinite" ? " is-infinite" : ""
+          }`;
+          view.value.className = valueClassName;
+          view.value.textContent = cardLabel(visual.visualValue);
+
+          if (view.card.firstElementChild !== view.value) {
+            view.card.replaceChildren(view.value);
+          }
+        } else if (view.card.firstChild) {
+          view.card.replaceChildren();
+        }
+
+        return view.item;
+      }
+
+      function orderSharedParticipantElements(items) {
+        let nextNode = sharedTable.firstElementChild;
+
+        items.forEach((item) => {
+          if (item === nextNode) {
+            nextNode = nextNode.nextElementSibling;
+            return;
+          }
+
+          sharedTable.insertBefore(item, nextNode);
+        });
       }
 
       function renderSharedTable() {
@@ -1583,56 +1687,7 @@
 
         const rows = participantRows();
         pruneSharedCardVisuals(rows);
-        sharedTable.replaceChildren(
-          ...rows.map((participant) => {
-            const item = document.createElement("article");
-            item.className = "participant";
-
-            const head = document.createElement("div");
-            head.className = "participant-head";
-
-            const name = document.createElement("div");
-            name.className = "participant-name";
-            name.textContent = participant.name;
-
-            const badges = document.createElement("div");
-            badges.className = "participant-badges";
-
-            if (participant.isSelf) {
-              const you = document.createElement("div");
-              you.className = "you-badge";
-              you.textContent = "You";
-              badges.append(you);
-            }
-
-            const ready = document.createElement("div");
-            ready.className = `ready-badge${participant.ready ? " is-ready" : ""}`;
-            ready.textContent = participant.ready ? "Ready" : "Waiting";
-            badges.append(ready);
-
-            const card = document.createElement("div");
-            const visual = sharedCardVisualFor(participant);
-            card.className = `participant-card${
-              visual.animationClass ? ` ${visual.animationClass}` : ""
-            }`;
-
-            if (visual.visualState === "revealed") {
-              card.classList.add("is-revealed");
-              const value = document.createElement("div");
-              value.className = `participant-value${
-                visual.visualValue === "infinite" ? " is-infinite" : ""
-              }`;
-              value.textContent = cardLabel(visual.visualValue);
-              card.append(value);
-            } else if (visual.visualState === "hidden") {
-              card.classList.add("is-hidden");
-            }
-
-            head.append(name, badges);
-            item.append(head, card);
-            return item;
-          })
-        );
+        orderSharedParticipantElements(rows.map(updateSharedParticipantElement));
       }
 
       function renderControls() {
