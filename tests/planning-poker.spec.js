@@ -116,37 +116,70 @@ test("card slides in when placed and out when cleared", async ({ context }) => {
   await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/has-visual-card/, { timeout: 1000 });
 });
 
-test("shared room shows local participant readiness and hidden card on the table", async ({ context }) => {
-  const controller = await context.newPage();
-  await controller.goto("/?room=test-room");
-  await controller.evaluate(() => localStorage.clear());
-  await controller.reload();
-  await disableTransitions(controller);
+test("shared room syncs readiness and cards across two participants and a public display", async ({
+  browser,
+}) => {
+  test.setTimeout(60_000);
 
-  await expect(controller.locator("#roomPill")).toHaveText("test-room");
-  await expect(controller.locator("#connectionLabel")).toHaveText("Config missing");
-  await expect(controller.locator("#sharedTable .participant")).toHaveCount(1);
-  await expect(controller.locator("#sharedTable .you-badge")).toHaveText("You");
-  await expect(controller.locator("#sharedTable .ready-badge")).toHaveText("Waiting");
-  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveClass(/is-hidden/);
+  const room = `playwright-${Date.now()}`;
+  const controllerAContext = await browser.newContext();
+  const controllerBContext = await browser.newContext();
+  const publicContext = await browser.newContext();
 
-  await controller.getByRole("button", { name: "Ready" }).click();
-  await controller.getByRole("button", { name: "Select 13" }).click();
+  try {
+    const controllerA = await controllerAContext.newPage();
+    const controllerB = await controllerBContext.newPage();
+    const publicDisplay = await publicContext.newPage();
 
-  await expect(controller.locator("#stateLabel")).toHaveText("Ready");
-  await expect(controller.locator("#sharedTable .ready-badge")).toHaveText("Ready");
-  await expect(controller.locator("#sharedTable .participant-card")).toHaveClass(/is-hidden/);
-  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveText("13");
+    await controllerA.goto(`/?room=${room}`);
+    await controllerB.goto(`/?room=${room}`);
+    await publicDisplay.goto(`/?room=${room}&view=public`);
+    await disableTransitions(controllerA);
+    await disableTransitions(controllerB);
+    await disableTransitions(publicDisplay);
 
-  await controller.getByRole("button", { name: "Reveal All" }).click();
+    await expect(controllerA.locator("#roomPill")).toHaveText(room);
+    await expect(controllerA.locator("#connectionLabel")).toHaveText("Online", { timeout: 20_000 });
+    await expect(controllerB.locator("#connectionLabel")).toHaveText("Online", { timeout: 20_000 });
+    await expect(publicDisplay.locator("#connectionLabel")).toHaveText("Online", { timeout: 20_000 });
 
-  await expect(controller.locator("#sharedTable .participant-card")).toHaveClass(/is-revealed/);
-  await expect(controller.locator("#sharedTable .participant-value")).toHaveText("13");
+    await controllerA.locator("#participantNameInput").fill("Alice");
+    await controllerB.locator("#participantNameInput").fill("Bob");
+    await controllerA.getByRole("button", { name: "Ready" }).click();
+    await controllerB.getByRole("button", { name: "Ready" }).click();
+    await controllerA.getByRole("button", { name: "Select 13" }).click();
+    await controllerB.getByRole("button", { name: "Select 5" }).click();
 
-  await controller.getByRole("button", { name: "Reset" }).click();
+    const participants = publicDisplay.locator("#sharedTable .participant");
+    const alice = participants.filter({ hasText: "Alice" });
+    const bob = participants.filter({ hasText: "Bob" });
 
-  await expect(controller.locator("#stateLabel")).toHaveText("No card");
-  await expect(controller.locator("#sharedTable .ready-badge")).toHaveText("Waiting");
-  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveClass(/is-hidden/);
-  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveClass(/is-revealed/);
+    await expect(participants).toHaveCount(2, { timeout: 12_000 });
+    await expect(alice.locator(".ready-badge")).toHaveText("Ready");
+    await expect(bob.locator(".ready-badge")).toHaveText("Ready");
+    await expect(alice.locator(".participant-card")).toHaveClass(/is-hidden/);
+    await expect(bob.locator(".participant-card")).toHaveClass(/is-hidden/);
+    await expect(alice.locator(".participant-value")).toHaveCount(0);
+    await expect(bob.locator(".participant-value")).toHaveCount(0);
+
+    await controllerA.getByRole("button", { name: "Reveal All" }).click();
+
+    await expect(alice.locator(".participant-card")).toHaveClass(/is-revealed/);
+    await expect(bob.locator(".participant-card")).toHaveClass(/is-revealed/);
+    await expect(alice.locator(".participant-value")).toHaveText("13");
+    await expect(bob.locator(".participant-value")).toHaveText("5");
+
+    await controllerA.getByRole("button", { name: "Reset" }).click();
+
+    await expect(alice.locator(".ready-badge")).toHaveText("Waiting");
+    await expect(bob.locator(".ready-badge")).toHaveText("Waiting");
+    await expect(alice.locator(".participant-card")).not.toHaveClass(/is-hidden/);
+    await expect(bob.locator(".participant-card")).not.toHaveClass(/is-hidden/);
+    await expect(alice.locator(".participant-card")).not.toHaveClass(/is-revealed/);
+    await expect(bob.locator(".participant-card")).not.toHaveClass(/is-revealed/);
+  } finally {
+    await controllerAContext.close();
+    await controllerBContext.close();
+    await publicContext.close();
+  }
 });

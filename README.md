@@ -18,6 +18,13 @@ Shared room:
 
 ## Run
 
+Hosted:
+
+- Controller: https://domjancik.github.io/planning-cards/
+- Public display: https://domjancik.github.io/planning-cards/?view=public
+- Shared room: https://domjancik.github.io/planning-cards/?room=demo
+- Shared public display: https://domjancik.github.io/planning-cards/?room=demo&view=public
+
 Simplest:
 
 Open `index.html` in your browser.
@@ -38,12 +45,14 @@ The controller also has a `Display` button that opens the public tab.
 
 ## Shared Rooms
 
-Fill in `supabase-config.js`:
+Hosted shared rooms are already configured with a public Supabase publishable key.
+
+For another deployment, update `supabase-config.js`:
 
 ```js
 window.PLANNING_CARDS_SUPABASE = {
   url: "https://your-project-ref.supabase.co",
-  anonKey: "your-anon-key",
+  anonKey: "your-publishable-or-anon-key",
 };
 ```
 
