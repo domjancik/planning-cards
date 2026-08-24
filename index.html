@@ -6,11 +6,14 @@
     <title>Planning Poker</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <script>
+      const initialParams = new URLSearchParams(window.location.search);
       document.documentElement.dataset.view =
-        new URLSearchParams(window.location.search).get("view") === "public"
+        initialParams.get("view") === "public"
           ? "public"
           : "controller";
+      document.documentElement.dataset.mode = initialParams.get("room") ? "shared" : "single";
     </script>
+    <script src="./supabase-config.js"></script>
     <style>
       :root {
         color-scheme: light;
@@ -61,7 +64,8 @@
       }
 
       .topbar,
-      .controls {
+      .controls,
+      .shared-panel {
         width: min(100%, 1040px);
         margin-inline: auto;
       }
@@ -111,6 +115,28 @@
         font-size: 0.88rem;
         font-weight: 700;
         text-align: center;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+
+      .room-pill {
+        display: none;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--muted);
+        font-size: 0.88rem;
+        font-weight: 700;
+      }
+
+      html[data-mode="shared"] .room-pill {
+        display: block;
       }
 
       .stage {
@@ -383,9 +409,233 @@
         background: var(--surface-soft);
       }
 
+      .action.is-ready {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent-dark);
+      }
+
       .action:disabled {
         cursor: not-allowed;
         opacity: 0.46;
+      }
+
+      .shared-panel {
+        display: none;
+        min-height: 0;
+      }
+
+      html[data-mode="shared"] .stage {
+        display: none;
+      }
+
+      html[data-mode="shared"] .shared-panel {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 14px;
+      }
+
+      .room-toolbar {
+        display: grid;
+        grid-template-columns: 1fr minmax(180px, 260px) auto;
+        gap: 10px;
+        align-items: end;
+      }
+
+      .room-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #94a3b8;
+      }
+
+      .status-dot.is-online {
+        background: var(--accent);
+      }
+
+      .room-name {
+        min-width: 0;
+        font-weight: 850;
+        color: var(--ink);
+      }
+
+      .connection-label {
+        color: var(--muted);
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .name-field {
+        display: grid;
+        gap: 5px;
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-weight: 800;
+      }
+
+      .name-field input {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0 11px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--ink);
+        font: inherit;
+        font-weight: 700;
+      }
+
+      .name-field input:focus-visible {
+        outline: 4px solid rgba(15, 118, 110, 0.18);
+        outline-offset: 2px;
+      }
+
+      .shared-table {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 220px));
+        gap: 12px;
+        align-content: start;
+        justify-content: center;
+        min-height: 0;
+      }
+
+      .participant {
+        min-width: 0;
+        display: grid;
+        gap: 9px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.74);
+        box-shadow: 0 10px 28px rgba(24, 32, 43, 0.08);
+      }
+
+      .participant-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .participant-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ink);
+        font-weight: 850;
+      }
+
+      .participant-badges {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex: 0 0 auto;
+      }
+
+      .you-badge,
+      .ready-badge {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 5px 7px;
+        color: var(--muted);
+        background: var(--surface-soft);
+        font-size: 0.74rem;
+        font-weight: 850;
+      }
+
+      .you-badge {
+        border-color: rgba(24, 32, 43, 0.12);
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.82);
+      }
+
+      .ready-badge.is-ready {
+        border-color: rgba(15, 118, 110, 0.28);
+        color: var(--accent-dark);
+        background: var(--accent-soft);
+      }
+
+      .participant-card {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 5 / 7;
+        border: 3px dotted rgba(82, 94, 109, 0.36);
+        border-radius: 8px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.38);
+      }
+
+      .participant-card.is-hidden,
+      .participant-card.is-revealed {
+        border: 1px solid #b7fff4;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.5), transparent 42%),
+          repeating-linear-gradient(
+            45deg,
+            #0f766e 0 11px,
+            #12867d 11px 22px,
+            #0d625c 22px 33px
+          );
+        box-shadow: 0 8px 24px rgba(15, 118, 110, 0.14);
+      }
+
+      .participant-card.is-revealed {
+        display: grid;
+        place-items: center;
+        border-color: #cfd8e3;
+        background:
+          linear-gradient(180deg, rgba(15, 118, 110, 0.08), transparent 42%),
+          var(--surface);
+      }
+
+      .participant-card.is-hidden::before {
+        content: "?";
+        position: absolute;
+        inset: 18%;
+        display: grid;
+        place-items: center;
+        border: 2px dashed rgba(255, 255, 255, 0.78);
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.14);
+        color: #ffffff;
+        font-size: clamp(2.2rem, 8vw, 4.2rem);
+        font-weight: 900;
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.24);
+      }
+
+      .participant-value {
+        display: grid;
+        place-items: center;
+        width: 80%;
+        height: 80%;
+        border: 2px solid var(--accent);
+        border-radius: 4px;
+        color: var(--accent-dark);
+        font-size: clamp(3.4rem, 10vw, 6rem);
+        font-weight: 900;
+        line-height: 0.82;
+      }
+
+      .participant-value.is-infinite {
+        font-size: clamp(3.8rem, 11vw, 6.8rem);
+        padding-bottom: 0.1em;
+      }
+
+      .shared-notice {
+        min-height: 1.25em;
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+        font-weight: 700;
       }
 
       html[data-view="public"] .app {
@@ -405,6 +655,30 @@
       html[data-view="public"] .display-card {
         width: min(78vw, 560px, calc(88vh * 5 / 7));
         cursor: default;
+      }
+
+      html[data-view="public"][data-mode="shared"] .app {
+        grid-template-rows: 1fr;
+      }
+
+      html[data-view="public"][data-mode="shared"] .stage {
+        display: none;
+      }
+
+      html[data-view="public"][data-mode="shared"] .shared-panel {
+        display: grid;
+        width: min(100%, 1180px);
+        height: calc(100vh - clamp(36px, 8vw, 96px));
+        align-content: center;
+      }
+
+      html[data-view="public"][data-mode="shared"] .room-toolbar,
+      html[data-view="public"][data-mode="shared"] .shared-notice {
+        display: none;
+      }
+
+      html[data-view="public"][data-mode="shared"] .shared-table {
+        align-content: center;
       }
 
       @media (max-width: 760px) {
@@ -435,9 +709,14 @@
           grid-template-columns: 1fr;
         }
 
+        .room-toolbar {
+          grid-template-columns: 1fr;
+          align-items: stretch;
+        }
+
         .actions {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
         }
 
         .action {
@@ -470,7 +749,10 @@
           <div class="brand-mark" aria-hidden="true">P</div>
           <h1>Planning Poker</h1>
         </div>
-        <div class="state-pill" id="stateLabel" aria-live="polite">No card</div>
+        <div class="top-actions">
+          <div class="room-pill" id="roomPill">Room</div>
+          <div class="state-pill" id="stateLabel" aria-live="polite">No card</div>
+        </div>
       </header>
 
       <section class="stage" aria-label="Selected card">
@@ -488,12 +770,31 @@
         </button>
       </section>
 
+      <section class="shared-panel" id="sharedPanel" aria-label="Shared planning table">
+        <div class="room-toolbar">
+          <div class="room-meta">
+            <span class="status-dot" id="connectionDot" aria-hidden="true"></span>
+            <span class="room-name" id="roomName">Room</span>
+            <span class="connection-label" id="connectionLabel">Local</span>
+          </div>
+          <label class="name-field">
+            Name
+            <input id="participantNameInput" type="text" maxlength="32" autocomplete="name" />
+          </label>
+          <button class="action secondary" id="copyRoomButton" type="button">Copy Link</button>
+        </div>
+        <div class="shared-table" id="sharedTable"></div>
+        <p class="shared-notice" id="sharedNotice" aria-live="polite"></p>
+      </section>
+
       <section class="controls" aria-label="Card controls">
         <div class="deck" id="deck" aria-label="Card values"></div>
         <div class="actions">
+          <button class="action secondary" id="readyButton" type="button">Ready</button>
           <button class="action primary" id="revealButton" type="button" disabled>Reveal</button>
           <button class="action secondary" id="clearButton" type="button" disabled>Clear</button>
           <button class="action secondary" id="displayButton" type="button">Display</button>
+          <button class="action secondary" id="roomButton" type="button">Room</button>
         </div>
       </section>
     </main>
@@ -508,36 +809,110 @@
         { value: "infinite", label: "∞" },
       ];
 
+      const params = new URLSearchParams(window.location.search);
+      const rawRoomId = params.get("room") ?? "";
+      const roomId = normalizeRoomId(rawRoomId);
+      const isPublicView = document.documentElement.dataset.view === "public";
+      const isSharedMode = Boolean(roomId);
+      const canTrackPresence = isSharedMode && !isPublicView;
+      const supabaseConfig = window.PLANNING_CARDS_SUPABASE ?? {};
+      const supabaseClientUrl = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+      const participantIdKey = "planning-poker-participant-id";
+      const participantNameKey = "planning-poker-participant-name";
+      const participantId = getOrCreateParticipantId();
+      const storageKey = isSharedMode
+        ? `planning-poker-card-state:${roomId}`
+        : "planning-poker-card-state";
+      const channelName = isSharedMode
+        ? `planning-poker-cards:${roomId}`
+        : "planning-poker-cards";
+      const localChannel =
+        "BroadcastChannel" in window ? new BroadcastChannel(channelName) : null;
+      const slideOutMs = 320;
+      const slideInMs = 380;
+
       const deck = document.querySelector("#deck");
       const displayCard = document.querySelector("#displayCard");
       const cardValue = document.querySelector("#cardValue");
       const hiddenMarker = document.querySelector("#hiddenMarker");
+      const readyButton = document.querySelector("#readyButton");
       const revealButton = document.querySelector("#revealButton");
       const clearButton = document.querySelector("#clearButton");
       const displayButton = document.querySelector("#displayButton");
+      const roomButton = document.querySelector("#roomButton");
       const stateLabel = document.querySelector("#stateLabel");
-      const isPublicView = document.documentElement.dataset.view === "public";
-      const storageKey = "planning-poker-card-state";
-      const channel =
-        "BroadcastChannel" in window ? new BroadcastChannel("planning-poker-cards") : null;
-      const slideOutMs = 320;
-      const slideInMs = 380;
+      const roomPill = document.querySelector("#roomPill");
+      const roomName = document.querySelector("#roomName");
+      const connectionDot = document.querySelector("#connectionDot");
+      const connectionLabel = document.querySelector("#connectionLabel");
+      const participantNameInput = document.querySelector("#participantNameInput");
+      const copyRoomButton = document.querySelector("#copyRoomButton");
+      const sharedTable = document.querySelector("#sharedTable");
+      const sharedNotice = document.querySelector("#sharedNotice");
 
       let state = loadState();
+      let participantName = getParticipantName();
       let visualSelectedValue = state.selectedValue;
       let visualRevealed = Boolean(state.selectedValue && state.revealed);
       let hasRendered = false;
       let enterTimer = null;
       let exitTimer = null;
+      let sharedPhase = state.revealed ? "revealed" : "voting";
+      let supabase = null;
+      let roomChannel = null;
+      let presenceReady = false;
+      let presenceRows = [];
+      let presenceTimer = null;
+
+      function normalizeRoomId(value) {
+        return value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+      }
+
+      function createRoomId() {
+        const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+        const bytes = new Uint8Array(8);
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+      }
+
+      function getOrCreateParticipantId() {
+        const existing = localStorage.getItem(participantIdKey);
+        if (existing) return existing;
+
+        const nextId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+        localStorage.setItem(participantIdKey, nextId);
+        return nextId;
+      }
+
+      function getParticipantName() {
+        const savedName = localStorage.getItem(participantNameKey);
+        if (savedName) return savedName;
+
+        const suffix = participantId.replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase();
+        return `Guest ${suffix}`;
+      }
+
+      function selectedCard() {
+        return cards.find((card) => card.value === state.selectedValue) ?? null;
+      }
+
+      function visualCard() {
+        return cards.find((card) => card.value === visualSelectedValue) ?? null;
+      }
+
+      function cardLabel(value) {
+        return cards.find((card) => card.value === value)?.label ?? "?";
+      }
 
       function normalizeState(value) {
-        const selectedCard = cards.find((card) => card.value === value?.selectedValue);
+        const selected = cards.find((card) => card.value === value?.selectedValue);
         const updatedAt =
           Number.isFinite(value?.updatedAt) && value.updatedAt > 0 ? value.updatedAt : Date.now();
 
         return {
-          selectedValue: selectedCard?.value ?? null,
-          revealed: Boolean(selectedCard && value?.revealed),
+          selectedValue: selected?.value ?? null,
+          revealed: Boolean(selected && value?.revealed),
+          ready: Boolean(value?.ready),
           updatedAt,
         };
       }
@@ -548,14 +923,6 @@
         } catch {
           return normalizeState({});
         }
-      }
-
-      function selectedCard() {
-        return cards.find((card) => card.value === state.selectedValue) ?? null;
-      }
-
-      function visualCard() {
-        return cards.find((card) => card.value === visualSelectedValue) ?? null;
       }
 
       function restartClassAnimation(className, duration, timerName) {
@@ -578,7 +945,7 @@
         }, duration);
       }
 
-      function publishState() {
+      function publishState({ syncPresence = true } = {}) {
         state.updatedAt = Date.now();
 
         try {
@@ -587,8 +954,12 @@
           // BroadcastChannel still keeps open tabs connected when local persistence is unavailable.
         }
 
-        channel?.postMessage(state);
+        localChannel?.postMessage(state);
         render();
+
+        if (syncPresence) {
+          schedulePresenceSync();
+        }
       }
 
       function applyRemoteState(nextState) {
@@ -599,19 +970,35 @@
         }
 
         state = normalized;
+        if (isSharedMode) {
+          sharedPhase = state.revealed ? "revealed" : sharedPhase;
+        }
         render();
       }
 
       function setSelection(card) {
         state = {
+          ...state,
           selectedValue: card.value,
-          revealed: false,
-          updatedAt: state.updatedAt,
+          revealed: isSharedMode ? sharedPhase === "revealed" : false,
+        };
+        publishState();
+      }
+
+      function toggleReady() {
+        state = {
+          ...state,
+          ready: !state.ready,
         };
         publishState();
       }
 
       function toggleReveal() {
+        if (isSharedMode) {
+          setSharedPhase(sharedPhase === "revealed" ? "voting" : "revealed", true);
+          return;
+        }
+
         if (!selectedCard()) return;
         state = {
           ...state,
@@ -621,15 +1008,206 @@
       }
 
       function clearSelection() {
+        if (isSharedMode) {
+          if (roomChannel) {
+            roomChannel.send({
+              type: "broadcast",
+              event: "room",
+              payload: { type: "reset", at: Date.now() },
+            });
+          }
+          sharedPhase = "voting";
+          state = {
+            ...state,
+            selectedValue: null,
+            revealed: false,
+            ready: false,
+          };
+          publishState();
+          return;
+        }
+
         state = {
           selectedValue: null,
           revealed: false,
+          ready: false,
           updatedAt: state.updatedAt,
         };
         publishState();
       }
 
-      function render() {
+      function setSharedPhase(nextPhase, broadcast) {
+        sharedPhase = nextPhase;
+        state = {
+          ...state,
+          revealed: nextPhase === "revealed" && Boolean(state.selectedValue),
+        };
+
+        if (broadcast && roomChannel) {
+          roomChannel.send({
+            type: "broadcast",
+            event: "room",
+            payload: { type: nextPhase === "revealed" ? "reveal" : "hide", at: Date.now() },
+          });
+        }
+
+        publishState();
+      }
+
+      function applyRoomEvent(payload) {
+        if (payload?.type === "reveal") {
+          setSharedPhase("revealed", false);
+          return;
+        }
+
+        if (payload?.type === "hide") {
+          setSharedPhase("voting", false);
+          return;
+        }
+
+        if (payload?.type === "reset") {
+          sharedPhase = "voting";
+          state = {
+            ...state,
+            selectedValue: null,
+            revealed: false,
+            ready: false,
+          };
+          publishState();
+        }
+      }
+
+      function currentPresencePayload() {
+        const hasSelection = Boolean(state.selectedValue);
+        const revealed = sharedPhase === "revealed" && hasSelection;
+
+        return {
+          id: participantId,
+          name: participantName,
+          ready: state.ready,
+          hasSelection,
+          revealed,
+          selectedValue: revealed ? state.selectedValue : null,
+          updatedAt: Date.now(),
+        };
+      }
+
+      function schedulePresenceSync() {
+        if (!canTrackPresence || !presenceReady || !roomChannel) {
+          return;
+        }
+
+        clearTimeout(presenceTimer);
+        presenceTimer = setTimeout(() => {
+          roomChannel.track(currentPresencePayload());
+        }, 80);
+      }
+
+      function localParticipantRow() {
+        return {
+          ...currentPresencePayload(),
+          isSelf: true,
+        };
+      }
+
+      function participantRows() {
+        const byId = new Map();
+
+        presenceRows.forEach((participant) => {
+          const previous = byId.get(participant.id);
+          if (!previous || participant.updatedAt >= previous.updatedAt) {
+            byId.set(participant.id, participant);
+          }
+        });
+
+        const local = localParticipantRow();
+        const existingLocal = byId.get(local.id);
+        if (!existingLocal || canTrackPresence) {
+          byId.set(local.id, { ...existingLocal, ...local });
+        }
+
+        return [...byId.values()].sort((a, b) => {
+          if (a.id === participantId) return -1;
+          if (b.id === participantId) return 1;
+          return a.name.localeCompare(b.name);
+        });
+      }
+
+      function updatePresenceRows() {
+        if (!roomChannel) return;
+
+        presenceRows = Object.values(roomChannel.presenceState())
+          .flat()
+          .map((payload) => ({
+            id: payload.id,
+            name: payload.name || "Guest",
+            ready: Boolean(payload.ready),
+            hasSelection: Boolean(payload.hasSelection),
+            revealed: Boolean(payload.revealed),
+            selectedValue: payload.selectedValue ?? null,
+            updatedAt: Number(payload.updatedAt) || 0,
+          }))
+          .filter((participant) => participant.id);
+
+        if (presenceRows.some((participant) => participant.revealed)) {
+          sharedPhase = "revealed";
+        }
+
+        render();
+      }
+
+      async function initSharedMode() {
+        if (!isSharedMode) return;
+
+        roomPill.textContent = roomId;
+        roomName.textContent = `Room ${roomId}`;
+        participantNameInput.value = participantName;
+        render();
+
+        if (!supabaseConfig.url || !supabaseConfig.anonKey) {
+          connectionLabel.textContent = "Config missing";
+          sharedNotice.textContent = "Add supabase-config.js values to sync this room.";
+          return;
+        }
+
+        connectionLabel.textContent = "Connecting";
+
+        try {
+          const { createClient } = await import(supabaseClientUrl);
+          supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+          roomChannel = supabase.channel(`planning-cards:${roomId}`, {
+            config: {
+              broadcast: { self: false },
+              presence: { key: participantId },
+            },
+          });
+
+          roomChannel
+            .on("presence", { event: "sync" }, updatePresenceRows)
+            .on("presence", { event: "join" }, updatePresenceRows)
+            .on("presence", { event: "leave" }, updatePresenceRows)
+            .on("broadcast", { event: "room" }, ({ payload }) => applyRoomEvent(payload))
+            .subscribe((status) => {
+              connectionLabel.textContent =
+                status === "SUBSCRIBED" ? "Online" : status.toLowerCase();
+              connectionDot.classList.toggle("is-online", status === "SUBSCRIBED");
+
+              if (status === "SUBSCRIBED") {
+                presenceReady = true;
+                schedulePresenceSync();
+                sharedNotice.textContent = "";
+              }
+            });
+        } catch (error) {
+          connectionLabel.textContent = "Offline";
+          sharedNotice.textContent = "Realtime connection failed.";
+          console.error(error);
+        }
+      }
+
+      function renderPersonalCard() {
         const selected = selectedCard();
         const hasSelection = Boolean(selected);
         const hadVisualCard = Boolean(visualSelectedValue);
@@ -639,7 +1217,7 @@
           displayCard.classList.remove("is-exiting");
 
           visualSelectedValue = selected.value;
-          visualRevealed = state.revealed;
+          visualRevealed = isSharedMode ? sharedPhase === "revealed" : state.revealed;
 
           if (hasRendered && !hadVisualCard) {
             restartClassAnimation("is-entering", slideInMs, "enter");
@@ -658,10 +1236,6 @@
         const visual = visualCard();
         const hasVisualCard = Boolean(visual);
 
-        deck.querySelectorAll(".choice-card").forEach((button) => {
-          button.setAttribute("aria-pressed", String(button.dataset.value === selected?.value));
-        });
-
         displayCard.disabled = !isPublicView && !hasSelection;
         displayCard.tabIndex = isPublicView ? -1 : 0;
         displayCard.setAttribute("aria-disabled", String(isPublicView || !hasSelection));
@@ -671,20 +1245,101 @@
         cardValue.textContent = visual?.label ?? "?";
         cardValue.classList.toggle("is-infinite", visual?.value === "infinite");
         hiddenMarker.textContent = "?";
-
-        revealButton.disabled = !hasSelection;
-        clearButton.disabled = !hasSelection;
-        revealButton.textContent = state.revealed ? "Hide" : "Reveal";
-        stateLabel.textContent = state.revealed ? "Revealed" : hasSelection ? "Placed" : "No card";
         displayCard.setAttribute(
           "aria-label",
-          state.revealed && selected
-            ? `Revealed card ${selected.value}`
-              : selected
-                ? "Hidden card placed"
-                : "No card selected"
+          visualRevealed && visual
+            ? `Revealed card ${visual.value}`
+            : selected
+              ? "Hidden card placed"
+              : "No card selected"
         );
+      }
 
+      function renderSharedTable() {
+        if (!isSharedMode) return;
+
+        const rows = participantRows();
+        sharedTable.replaceChildren(
+          ...rows.map((participant) => {
+            const item = document.createElement("article");
+            item.className = "participant";
+
+            const head = document.createElement("div");
+            head.className = "participant-head";
+
+            const name = document.createElement("div");
+            name.className = "participant-name";
+            name.textContent = participant.name;
+
+            const badges = document.createElement("div");
+            badges.className = "participant-badges";
+
+            if (participant.isSelf) {
+              const you = document.createElement("div");
+              you.className = "you-badge";
+              you.textContent = "You";
+              badges.append(you);
+            }
+
+            const ready = document.createElement("div");
+            ready.className = `ready-badge${participant.ready ? " is-ready" : ""}`;
+            ready.textContent = participant.ready ? "Ready" : "Waiting";
+            badges.append(ready);
+
+            const card = document.createElement("div");
+            card.className = "participant-card";
+
+            if (participant.revealed && participant.selectedValue) {
+              card.classList.add("is-revealed");
+              const value = document.createElement("div");
+              value.className = `participant-value${
+                participant.selectedValue === "infinite" ? " is-infinite" : ""
+              }`;
+              value.textContent = cardLabel(participant.selectedValue);
+              card.append(value);
+            } else if (participant.hasSelection) {
+              card.classList.add("is-hidden");
+            }
+
+            head.append(name, badges);
+            item.append(head, card);
+            return item;
+          })
+        );
+      }
+
+      function renderControls() {
+        const hasSelection = Boolean(selectedCard());
+
+        deck.querySelectorAll(".choice-card").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.value === state.selectedValue));
+        });
+
+        readyButton.textContent = state.ready ? "Not Ready" : "Ready";
+        readyButton.classList.toggle("is-ready", state.ready);
+        revealButton.disabled = isSharedMode ? false : !hasSelection;
+        clearButton.disabled = isSharedMode ? false : !hasSelection;
+        revealButton.textContent = isSharedMode
+          ? sharedPhase === "revealed"
+            ? "Hide All"
+            : "Reveal All"
+          : state.revealed
+            ? "Hide"
+            : "Reveal";
+        clearButton.textContent = isSharedMode ? "Reset" : "Clear";
+        stateLabel.textContent = state.revealed
+          ? "Revealed"
+          : state.ready
+            ? "Ready"
+            : hasSelection
+              ? "Placed"
+              : "No card";
+      }
+
+      function render() {
+        renderPersonalCard();
+        renderControls();
+        renderSharedTable();
         hasRendered = true;
       }
 
@@ -700,6 +1355,8 @@
         deck.append(button);
       });
 
+      readyButton.addEventListener("click", toggleReady);
+
       revealButton.addEventListener("click", () => {
         toggleReveal();
       });
@@ -712,6 +1369,36 @@
         const displayUrl = new URL(window.location.href);
         displayUrl.searchParams.set("view", "public");
         window.open(displayUrl.toString(), "planning-poker-display");
+      });
+
+      roomButton.addEventListener("click", () => {
+        const roomUrl = new URL(window.location.href);
+        roomUrl.searchParams.set("room", roomId || createRoomId());
+        roomUrl.searchParams.delete("view");
+        window.location.href = roomUrl.toString();
+      });
+
+      copyRoomButton.addEventListener("click", async () => {
+        const roomUrl = new URL(window.location.href);
+        roomUrl.searchParams.set("room", roomId || createRoomId());
+        roomUrl.searchParams.delete("view");
+
+        try {
+          await navigator.clipboard.writeText(roomUrl.toString());
+          copyRoomButton.textContent = "Copied";
+          setTimeout(() => {
+            copyRoomButton.textContent = "Copy Link";
+          }, 1200);
+        } catch {
+          window.prompt("Room link", roomUrl.toString());
+        }
+      });
+
+      participantNameInput.addEventListener("input", () => {
+        participantName = participantNameInput.value.trim() || "Guest";
+        localStorage.setItem(participantNameKey, participantName);
+        schedulePresenceSync();
+        render();
       });
 
       displayCard.addEventListener("click", () => {
@@ -751,7 +1438,7 @@
         }
       });
 
-      channel?.addEventListener("message", (event) => {
+      localChannel?.addEventListener("message", (event) => {
         applyRemoteState(event.data);
       });
 
@@ -762,6 +1449,7 @@
       });
 
       render();
+      initSharedMode();
     </script>
   </body>
 </html>

@@ -5,10 +5,11 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const outDir = path.join(root, "docs", "screenshots");
-const baseUrl = "http://127.0.0.1:4173";
+const screenshotPort = "4188";
+const baseUrl = `http://127.0.0.1:${screenshotPort}`;
 
 function startServer() {
-  const server = spawn("python3", ["-m", "http.server", "4173", "--bind", "127.0.0.1"], {
+  const server = spawn("python3", ["-m", "http.server", screenshotPort, "--bind", "127.0.0.1"], {
     cwd: root,
     stdio: "ignore",
   });
@@ -84,6 +85,39 @@ async function main() {
       fullPage: false,
     });
 
+    const sharedContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const sharedController = await sharedContext.newPage();
+    const sharedPublic = await sharedContext.newPage();
+
+    await sharedController.goto(`${baseUrl}/?room=demo-table`);
+    await sharedController.evaluate(() => localStorage.clear());
+    await sharedController.reload();
+    await sharedPublic.goto(`${baseUrl}/?room=demo-table&view=public`);
+
+    await disableMotion(sharedController);
+    await disableMotion(sharedPublic);
+
+    await sharedController.getByRole("button", { name: "Ready" }).click();
+    await sharedController.getByRole("button", { name: "Select 8" }).click();
+    await sharedPublic.locator("#sharedTable .participant-card.is-hidden").waitFor();
+
+    await sharedController.screenshot({
+      path: path.join(outDir, "shared-controller-hidden.png"),
+      fullPage: false,
+    });
+    await sharedPublic.screenshot({
+      path: path.join(outDir, "shared-public-hidden.png"),
+      fullPage: false,
+    });
+
+    await sharedController.getByRole("button", { name: "Reveal All" }).click();
+    await sharedPublic.locator("#sharedTable .participant-card.is-revealed").waitFor();
+    await sharedPublic.screenshot({
+      path: path.join(outDir, "shared-public-revealed.png"),
+      fullPage: false,
+    });
+
+    await sharedContext.close();
     await browser.close();
   } finally {
     server.kill();

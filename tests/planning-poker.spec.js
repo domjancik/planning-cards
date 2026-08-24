@@ -35,9 +35,16 @@ test("controller exposes the expected private controls", async ({ context }) => 
     await expect(controller.getByRole("button", { name: `Select ${value}`, exact: true })).toBeVisible();
   }
 
+  await expect(controller.getByRole("button", { name: "Ready" })).toBeVisible();
   await expect(controller.getByRole("button", { name: "Reveal" })).toBeDisabled();
   await expect(controller.getByRole("button", { name: "Clear" })).toBeDisabled();
   await expect(controller.getByRole("button", { name: "Display" })).toBeVisible();
+  await expect(controller.getByRole("button", { name: "Room" })).toBeVisible();
+
+  await controller.getByRole("button", { name: "Ready" }).click();
+
+  await expect(controller.locator("#stateLabel")).toHaveText("Ready");
+  await expect(controller.getByRole("button", { name: "Not Ready" })).toBeVisible();
 });
 
 test("public display starts as an empty card field", async ({ context }) => {
@@ -107,4 +114,39 @@ test("card slides in when placed and out when cleared", async ({ context }) => {
   await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/has-selection/);
   await expect(publicDisplay.locator("#displayCard")).toHaveAttribute("aria-label", "No card selected");
   await expect(publicDisplay.locator("#displayCard")).not.toHaveClass(/has-visual-card/, { timeout: 1000 });
+});
+
+test("shared room shows local participant readiness and hidden card on the table", async ({ context }) => {
+  const controller = await context.newPage();
+  await controller.goto("/?room=test-room");
+  await controller.evaluate(() => localStorage.clear());
+  await controller.reload();
+  await disableTransitions(controller);
+
+  await expect(controller.locator("#roomPill")).toHaveText("test-room");
+  await expect(controller.locator("#connectionLabel")).toHaveText("Config missing");
+  await expect(controller.locator("#sharedTable .participant")).toHaveCount(1);
+  await expect(controller.locator("#sharedTable .you-badge")).toHaveText("You");
+  await expect(controller.locator("#sharedTable .ready-badge")).toHaveText("Waiting");
+  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveClass(/is-hidden/);
+
+  await controller.getByRole("button", { name: "Ready" }).click();
+  await controller.getByRole("button", { name: "Select 13" }).click();
+
+  await expect(controller.locator("#stateLabel")).toHaveText("Ready");
+  await expect(controller.locator("#sharedTable .ready-badge")).toHaveText("Ready");
+  await expect(controller.locator("#sharedTable .participant-card")).toHaveClass(/is-hidden/);
+  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveText("13");
+
+  await controller.getByRole("button", { name: "Reveal All" }).click();
+
+  await expect(controller.locator("#sharedTable .participant-card")).toHaveClass(/is-revealed/);
+  await expect(controller.locator("#sharedTable .participant-value")).toHaveText("13");
+
+  await controller.getByRole("button", { name: "Reset" }).click();
+
+  await expect(controller.locator("#stateLabel")).toHaveText("No card");
+  await expect(controller.locator("#sharedTable .ready-badge")).toHaveText("Waiting");
+  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveClass(/is-hidden/);
+  await expect(controller.locator("#sharedTable .participant-card")).not.toHaveClass(/is-revealed/);
 });
